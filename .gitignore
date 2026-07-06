@@ -1,0 +1,24 @@
+# 操作系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / 编辑器配置
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 临时文件与备份
+*.tmp
+*.bak
+*.log
+*.zip
+*.tar.gz
+
+# macOS 元信息
+__MACOSX/
+
+# 本地测试产物（用户在本地试打包时可能生成）
+skills/*/knowledge-generator.zip

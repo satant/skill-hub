@@ -22,3 +22,5 @@ __MACOSX/
 
 # 本地测试产物（用户在本地试打包时可能生成）
 skills/*/knowledge-generator.zip
+issue/
+.trae/

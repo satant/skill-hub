@@ -4,6 +4,46 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.2.0] - 2026-07-07
+
+### 破坏性变更
+- SKILL.md 版本号从 2.1.0 升至 2.2.0
+- 核心理念转变：知识库首要服务对象从"人类"变为"AI"，目的是减少 AI 每次扫描范围
+- 新增双产物机制：每个知识库文档必须同时生成 .md（人类可读）和 .summary.json（AI 可消费）
+
+### 新增
+- 新增**AI 可消费性设计**顶级章节（D1/D2/D3）
+  - D1 知识库查询工具（query-knowledge.sh）：AI 执行任务前先查知识库，命中后消费 .summary.json 减少扫描
+  - D2 机器可读摘要（.summary.json）：AI 查询的首要入口，含 entryPoints/coreChain/grepHints/confidence
+  - D3 场景触发：用户理解/分析/设计/排查任务时先查知识库
+- 新增**增强领域识别**（A1-A5），内聚在步骤3同一章节
+  - A1 业务术语候选提取（extract-business-terms.sh）：候选字符串提取器，分词由 AI 完成
+  - A2 业务动词聚类（cluster-by-business-verb.sh）：按动词分组方法名识别跨模块领域
+  - A3 方法级重叠率判定：量化领域边界（≥50%合并，<30%独立）
+  - A4 覆盖深度校验：检查已有文档的覆盖深度
+  - A5 跨模块领域重组：3条聚合规则（术语/调用链/共享枚举）
+- 新增**模式四：外部依赖补充**（C1）：合规反编译二方库
+  - decompile-external-jar.sh：LICENSE 检查 + javap 结构提取
+  - 合规优先：禁止反编译的 jar 跳过
+  - 明确 javap 能力边界：只获取结构定义，业务含义需 AI 反推
+  - 坐标定位修正：从 pom.xml 解析，不从类名反推
+- 步骤8 新增**外部依赖清单**（C2）：索引底部维护外部库的 Maven 坐标和反编译状态
+- 步骤6 新增**AI 可消费性校验**（B3）：检查 .summary.json 存在性和关键字段完整性
+- 索引首次构建新增**外部依赖分区**
+- 触发条件新增 D3 场景触发
+- 新增模板：templates/机器可读摘要模板.json
+- 新增脚本：scripts/query-knowledge.sh、scripts/extract-business-terms.sh、scripts/cluster-by-business-verb.sh、scripts/decompile-external-jar.sh
+
+### 变更
+- 步骤6 校验脚本**强制执行**（B1）：执行失败降级为 AI 手动校验，校验不通过强制修正
+- validate-knowledge.sh **路径提取增强**（B2）：支持多种格式（Java 类名、反引号路径、表格裸路径、src/main 片段）
+- validate-knowledge.sh 新增 **--json 参数**：输出结构化报告便于 AI 消费
+- validate-knowledge.sh 新增**失败项明细**输出
+- 评分卡新增 **AI 可消费性维度**（15分）和**领域复杂度弹性**（简单领域门槛降至65）
+- description 更新：强调"为 AI 解决问题提供精准依据"
+- 步骤3 A1-A5 五项增强成组执行，构成"增强领域识别"内聚章节
+- 索引分区从四分区扩展为**五分区**（新增外部依赖）
+
 ## [2.1.0] - 2026-07-06
 
 ### 新增

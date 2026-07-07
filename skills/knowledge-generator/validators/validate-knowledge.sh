@@ -1,76 +1,111 @@
 #!/usr/bin/env bash
 #
-# 知识库文件质量校验脚本
+# 知识库文件质量校验脚本（B1+B2 增强）
 # 校验知识库 .md 文件中的引用路径是否存在、模板字段是否完整、关键词是否重复。
+# 同时校验 .summary.json 机器可读摘要是否存在（B3 AI 可消费性维度）。
 #
-# 用法: bash validate-knowledge.sh <知识库文件.md> <项目根目录> [索引文件.md]
+# 用法: bash validate-knowledge.sh <知识库文件.md> <项目根目录> [索引文件.md] [--json]
+#   --json: 输出 JSON 格式的结构化报告（便于 AI 消费）
+#
 # 依赖: grep, awk, find（均为系统自带）
 #
 set -euo pipefail
 
-KB_FILE="${1:-}"
-PROJECT_ROOT="${2:-}"
-INDEX_FILE="${3:-}"
+KB_FILE=""
+PROJECT_ROOT=""
+INDEX_FILE=""
+JSON_OUTPUT=false
+
+# 解析参数
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) JSON_OUTPUT=true; shift ;;
+    *)
+      if [ -z "$KB_FILE" ]; then KB_FILE="$1"
+      elif [ -z "$PROJECT_ROOT" ]; then PROJECT_ROOT="$1"
+      elif [ -z "$INDEX_FILE" ]; then INDEX_FILE="$1"
+      fi
+      shift ;;
+  esac
+done
 
 if [ -z "$KB_FILE" ] || [ -z "$PROJECT_ROOT" ]; then
-  echo "用法: bash validate-knowledge.sh <知识库文件.md> <项目根目录> [索引文件.md]" >&2
-  exit 1
+  echo "用法: bash validate-knowledge.sh <知识库文件.md> <项目根目录> [索引文件.md] [--json]" >&2
+  exit 2
 fi
 
 if [ ! -f "$KB_FILE" ]; then
   echo "错误: 知识库文件不存在: $KB_FILE" >&2
-  exit 1
+  exit 2
 fi
 
 if [ ! -d "$PROJECT_ROOT" ]; then
   echo "错误: 项目根目录不存在: $PROJECT_ROOT" >&2
-  exit 1
+  exit 2
 fi
 
 PASS_COUNT=0
 FAIL_COUNT=0
 WARN_COUNT=0
+FAIL_DETAILS=()
 
-print_pass() { echo "  [PASS] $1"; PASS_COUNT=$((PASS_COUNT + 1)); }
-print_fail() { echo "  [FAIL] $1"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
-print_warn() { echo "  [WARN] $1"; WARN_COUNT=$((WARN_COUNT + 1)); }
-
-echo "=========================================="
-echo "知识库质量校验报告"
-echo "文件: $KB_FILE"
-echo "项目: $PROJECT_ROOT"
-echo "=========================================="
-echo ""
+if [ "$JSON_OUTPUT" = false ]; then
+  print_pass() { echo "  [PASS] $1"; PASS_COUNT=$((PASS_COUNT + 1)); }
+  print_fail() { echo "  [FAIL] $1"; FAIL_COUNT=$((FAIL_COUNT + 1)); FAIL_DETAILS+=("$1"); }
+  print_warn() { echo "  [WARN] $1"; WARN_COUNT=$((WARN_COUNT + 1)); }
+else
+  print_pass() { PASS_COUNT=$((PASS_COUNT + 1)); }
+  print_fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); FAIL_DETAILS+=("$1"); }
+  print_warn() { WARN_COUNT=$((WARN_COUNT + 1)); }
+fi
 
 # ============================================
 # 校验1：模板必填章节完整性
 # ============================================
-echo "--- 校验1: 模板必填章节完整性 ---"
+if [ "$JSON_OUTPUT" = false ]; then
+  echo "--- 校验1: 模板必填章节完整性 ---"
+fi
 
 REQUIRED_SECTIONS=("是什么" "核心文件" "排查建议" "高风险点" "待补充")
 for SECTION in "${REQUIRED_SECTIONS[@]}"; do
   if grep -q "## .*${SECTION}" "$KB_FILE" 2>/dev/null; then
     print_pass "章节存在: $SECTION"
   else
-    # 导航类和工具类的必填章节不同，做宽容检查
     print_warn "章节缺失（若为导航类/工具类模板可忽略）: $SECTION"
   fi
 done
-echo ""
 
 # ============================================
-# 校验2：核心文件表中引用的路径存在性
+# 校验2：核心文件表中引用的路径存在性（B2 增强）
 # ============================================
-echo "--- 校验2: 核心文件路径存在性 ---"
+if [ "$JSON_OUTPUT" = false ]; then
+  echo ""
+  echo "--- 校验2: 核心文件路径存在性 ---"
+fi
 
-# 提取表格中的路径引用（com.xxx.Yyy 格式的 Java 类名，或 src/ 开头的路径）
-PATHS=$(grep -oE '(com|org|net|io|cn)\.[a-zA-Z0-9_.]+[A-Z][a-zA-Z0-9_]*' "$KB_FILE" 2>/dev/null | sort -u || true)
-FILE_PATHS=$(grep -oE '`[^`]*(src/|/main/)[^`]*`' "$KB_FILE" 2>/dev/null | sed 's/`//g' | sort -u || true)
+# B2增强：多种路径格式提取
+# 格式1: Java 完整类名 (com.xxx.Yyy)
+# 格式2: 反引号包裹的文件路径 (`xxx/src/main/...`)
+# 格式3: Markdown 表格中的裸文件路径 (| ... | src/...)
+# 格式4: 包含 /src/ 或 /main/ 的任意路径片段
 
-if [ -n "$PATHS" ]; then
+# 提取 Java 完整类名
+JAVA_CLASSES=$(grep -oE '\b(com|org|net|io|cn|edu|gov)\.[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*\.[A-Z][a-zA-Z0-9_]*\b' "$KB_FILE" 2>/dev/null | sort -u || true)
+
+# 提取反引号包裹的文件路径
+BACKTICK_PATHS=$(grep -oE '`[^`]*(/src/|/main/|/test/|\.java|\.py|\.ts|\.js|\.go)[^`]*`' "$KB_FILE" 2>/dev/null | sed 's/`//g' | sort -u || true)
+
+# B2增强：提取 Markdown 表格中的裸路径（| 分隔符后的文件路径）
+TABLE_PATHS=$(grep -oE '\|\s*[^|`]*(/src/|/main/java/)[^|`]*\.' "$KB_FILE" 2>/dev/null \
+  | sed 's/|\s*//' | sed 's/\.$//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' \
+  | grep -v '^$' | sort -u || true)
+
+# 提取纯文件路径片段（兼容路径出现在表格、列表、代码块等位置）
+RAW_FILE_PATHS=$(grep -oE '[a-zA-Z0-9_/-]+/(src/main|src/test)/[a-zA-Z0-9_/-]+\.(java|py|ts|js|go)' "$KB_FILE" 2>/dev/null | sort -u || true)
+
+if [ -n "$JAVA_CLASSES" ]; then
   while IFS= read -r FULL_CLASS; do
     [ -z "$FULL_CLASS" ] && continue
-    # 将 com.example.xxx.Yyy 转换为可能的文件路径
     REL_PATH=$(echo "$FULL_CLASS" | tr '.' '/')
     FOUND=$(find "$PROJECT_ROOT" -path "*/${REL_PATH}.java" -type f 2>/dev/null | head -1 || true)
     if [ -n "$FOUND" ]; then
@@ -78,38 +113,41 @@ if [ -n "$PATHS" ]; then
     else
       print_fail "类路径不存在: $FULL_CLASS"
     fi
-  done <<< "$PATHS"
+  done <<< "$JAVA_CLASSES"
 fi
 
-if [ -n "$FILE_PATHS" ]; then
+# 合并所有文件路径进行校验
+ALL_FILE_PATHS=$(echo -e "${BACKTICK_PATHS}\n${TABLE_PATHS}\n${RAW_FILE_PATHS}" | grep -v '^$' | sort -u || true)
+
+if [ -n "$ALL_FILE_PATHS" ]; then
   while IFS= read -r FP; do
     [ -z "$FP" ] && continue
-    if [ -f "${PROJECT_ROOT}/${FP}" ] || [ -f "$FP" ]; then
+    # 尝试多种匹配方式
+    if [ -f "${PROJECT_ROOT}/${FP}" ] || [ -f "$FP" ] || find "$PROJECT_ROOT" -path "*/${FP}" -type f 2>/dev/null | grep -q .; then
       print_pass "文件路径存在: $FP"
     else
       print_fail "文件路径不存在: $FP"
     fi
-  done <<< "$FILE_PATHS"
+  done <<< "$ALL_FILE_PATHS"
 fi
 
-if [ -z "$PATHS" ] && [ -z "$FILE_PATHS" ]; then
+if [ -z "$JAVA_CLASSES" ] && [ -z "$ALL_FILE_PATHS" ]; then
   print_warn "未检测到可校验的路径引用"
 fi
-echo ""
 
 # ============================================
-# 校验3：关键词重复检查（需要索引文件）
+# 校验3：关键词重复检查
 # ============================================
-echo "--- 校验3: 关键词重复检查 ---"
+if [ "$JSON_OUTPUT" = false ]; then
+  echo ""
+  echo "--- 校验3: 关键词重复检查 ---"
+fi
 
 if [ -n "$INDEX_FILE" ] && [ -f "$INDEX_FILE" ]; then
-  # 提取知识库文件中的表格行（候选关键词来源）
-  KB_KEYWORDS=$(grep -oE '\b[A-Z][a-zA-Z0-9]+(Manager|Service|Controller|Facade|Enum|DO|DTO)\b' "$KB_FILE" 2>/dev/null | sort -u || true)
-
+  KB_KEYWORDS=$(grep -oE '\b[A-Z][a-zA-Z0-9]+(Manager|Service|Controller|Facade|Enum|DO|DTO|Repository)\b' "$KB_FILE" 2>/dev/null | sort -u || true)
   if [ -n "$KB_KEYWORDS" ]; then
     while IFS= read -r KW; do
       [ -z "$KW" ] && continue
-      # 在索引文件中搜索该关键词
       MATCH_COUNT=$(grep -c "$KW" "$INDEX_FILE" 2>/dev/null || echo "0")
       if [ "$MATCH_COUNT" -gt 1 ]; then
         print_fail "关键词重复（索引中出现 ${MATCH_COUNT} 次）: $KW"
@@ -123,38 +161,90 @@ if [ -n "$INDEX_FILE" ] && [ -f "$INDEX_FILE" ]; then
 else
   print_warn "未提供索引文件，跳过关键词重复检查"
 fi
-echo ""
 
 # ============================================
 # 校验4：交叉引用路径检查
 # ============================================
-echo "--- 校验4: 交叉引用路径检查 ---"
+if [ "$JSON_OUTPUT" = false ]; then
+  echo ""
+  echo "--- 校验4: 交叉引用路径检查 ---"
+fi
 
-# 提取引用其他 .md 文件的路径
 MD_REFS=$(grep -oE '\[.*\]\(([^)]*\.md)\)' "$KB_FILE" 2>/dev/null | grep -oE '\([^)]*\.md\)' | tr -d '()' | sort -u || true)
-
 if [ -n "$MD_REFS" ]; then
-  while IFS= read -ref; do
-    [ -z "$ref" ] && continue
-    # 解析相对路径
+  while IFS= read -r REF; do
+    [ -z "$REF" ] && continue
     KB_DIR=$(dirname "$KB_FILE")
-    if [ -f "${KB_DIR}/${ref}" ]; then
-      print_pass "交叉引用存在: $ref"
+    if [ -f "${KB_DIR}/${REF}" ]; then
+      print_pass "交叉引用存在: $REF"
     else
-      print_fail "交叉引用不存在: $ref"
+      print_fail "交叉引用不存在: $REF"
     fi
   done <<< "$MD_REFS"
 else
   print_warn "未检测到交叉引用"
 fi
-echo ""
 
 # ============================================
-# 汇总
+# 校验5：AI 可消费性检查（B3，FAIL 级别）
 # ============================================
-echo "=========================================="
-echo "校验汇总: 通过 $PASS_COUNT | 失败 $FAIL_COUNT | 警告 $WARN_COUNT"
-echo "=========================================="
+if [ "$JSON_OUTPUT" = false ]; then
+  echo ""
+  echo "--- 校验5: AI 可消费性检查 ---"
+fi
+
+# 检查 .summary.json 是否存在
+SUMMARY_FILE="${KB_FILE%.md}.summary.json"
+if [ -f "$SUMMARY_FILE" ]; then
+  print_pass "机器可读摘要存在: $(basename "$SUMMARY_FILE")"
+  # 检查关键字段是否非空（补全 confidence 和 coverageGaps）
+  for FIELD in "domain" "entryPoints" "coreChain" "grepHints" "confidence" "coverageGaps"; do
+    if grep -q "\"${FIELD}\"" "$SUMMARY_FILE" 2>/dev/null; then
+      print_pass "摘要字段存在: ${FIELD}"
+    else
+      print_fail "摘要字段缺失: ${FIELD}"
+    fi
+  done
+else
+  print_fail "机器可读摘要不存在（.summary.json 是 AI 消费的首选入口，必须生成）"
+fi
+
+# ============================================
+# 汇总输出
+# ============================================
+if [ "$JSON_OUTPUT" = true ]; then
+  # JSON 结构化报告
+  echo "{"
+  echo "  \"file\": \"$(basename "$KB_FILE")\","
+  echo "  \"passed\": $PASS_COUNT,"
+  echo "  \"failed\": $FAIL_COUNT,"
+  echo "  \"warnings\": $WARN_COUNT,"
+  echo "  \"allPassed\": $([ "$FAIL_COUNT" -eq 0 ] && echo true || echo false),"
+  if [ ${#FAIL_DETAILS[@]} -gt 0 ]; then
+    echo "  \"failures\": ["
+    for i in "${!FAIL_DETAILS[@]}"; do
+      echo -n "    \"${FAIL_DETAILS[$i]}\""
+      [ $i -lt $((${#FAIL_DETAILS[@]} - 1)) ] && echo ","
+    done
+    echo ""
+    echo "  ]"
+  else
+    echo "  \"failures\": []"
+  fi
+  echo "}"
+else
+  echo ""
+  echo "=========================================="
+  echo "校验汇总: 通过 $PASS_COUNT | 失败 $FAIL_COUNT | 警告 $WARN_COUNT"
+  if [ ${#FAIL_DETAILS[@]} -gt 0 ]; then
+    echo ""
+    echo "失败项明细:"
+    for detail in "${FAIL_DETAILS[@]}"; do
+      echo "  - $detail"
+    done
+  fi
+  echo "=========================================="
+fi
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   exit 1

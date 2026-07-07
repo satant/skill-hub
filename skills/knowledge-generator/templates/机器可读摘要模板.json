@@ -1,0 +1,103 @@
+{
+  "$comment": "机器可读摘要模板 v2.2.0 | AI 消费知识库的首要入口，与 .md 文件同级生成",
+  "$comment2": "所有路径必须是项目内相对路径；grepHints 必须是可直接执行的 grep/rg 命令",
+  "domain": "{领域名称，如：发票冲红}",
+  "docFile": "{对应的人类可读文档相对路径，如：docs/knowledge/业务领域/发票冲红/发票冲红主链路.md}",
+  "generatedAt": "{生成时间，ISO 8601 格式}",
+  "generatorVersion": "2.2.0",
+
+  "summary": "{一句话描述本领域解决什么问题，≤80字}",
+
+  "entryPoints": [
+    {
+      "type": "controller|facade|job|mq|api",
+      "className": "{完整类名，如：cn.gov.zcy.invoice.controller.RedRushController}",
+      "filePath": "{源码相对路径}",
+      "methods": ["{入口方法名列表}"]
+    }
+  ],
+
+  "coreClasses": [
+    {
+      "className": "{完整类名}",
+      "filePath": "{源码相对路径}",
+      "role": "manager|service|calculator|validator|dao|enum|do|dto",
+      "responsibility": "{职责简述，≤50字}"
+    }
+  ],
+
+  "coreChain": [
+    {
+      "name": "{链路名称，如：冲红申请创建链路}",
+      "flow": ["{方法调用序列，如：RedRushController.apply() → RedRushManager.createApply() → RedRushValidator.validate() → RedRushDAO.insert()}"],
+      "confidence": "high|low",
+      "confidenceNote": "{confidence 为 low 时说明原因}"
+    }
+  ],
+
+  "stateMachine": {
+    "enumClass": "{状态枚举完整类名}",
+    "states": [
+      {
+        "value": "{枚举值，如：INIT}",
+        "meaning": "{业务含义}",
+        "confidence": "high|low"
+      }
+    ],
+    "transitions": [
+      {
+        "from": "{起始状态值}",
+        "to": "{目标状态值}",
+        "trigger": "{触发条件/操作类型}",
+        "confidence": "high|low"
+      }
+    ]
+  },
+
+  "businessTerms": [
+    {
+      "term": "{中文业务术语，如：冲红}",
+      "englishAlias": "{对应的英文类名/方法名/枚举名，如：RedRush}",
+      "context": "{该术语在代码中出现的典型位置说明}"
+    }
+  ],
+
+  "dataModels": [
+    {
+      "tableName": "{数据库表名}",
+      "doClass": "{DO 类完整类名}",
+      "keyFields": ["{核心字段名列表}"]
+    }
+  ],
+
+  "grepHints": [
+    "{可直接执行的搜索命令，帮助 AI 快速定位代码，如：grep -rn 'RedRushManager' --include='*.java'}",
+    "{如：rg 'RedRushStatusEnum' -t java}"
+  ],
+
+  "riskPoints": [
+    {
+      "type": "reliability|concurrency|defect|security|performance",
+      "description": "{风险描述}",
+      "location": "{文件路径 + 方法名}",
+      "confidence": "high|low"
+    }
+  ],
+
+  "externalDependencies": [
+    {
+      "className": "{外部库类名}",
+      "jarCoordinate": "{Maven 坐标 groupId:artifactId:version}",
+      "usage": "{在本项目中的用途}",
+      "decompiled": false,
+      "note": "{若 decompiled=false 说明未反编译，原因可能是 LICENSE 限制或未找到 jar}"
+    }
+  ],
+
+  "coverageGaps": [
+    {
+      "gap": "{已知未覆盖的子场景描述}",
+      "reason": "{未覆盖原因，如：待二方库确认、逻辑过于复杂待拆分}"
+    }
+  ]
+}

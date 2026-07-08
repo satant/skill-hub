@@ -210,6 +210,69 @@ else
 fi
 
 # ============================================
+# 校验6：覆盖深度双维度校验（issue-004 增强）
+# ============================================
+if [ "$JSON_OUTPUT" = false ]; then
+  echo ""
+  echo "--- 校验6: 覆盖深度双维度校验（密度 + 覆盖率） ---"
+fi
+
+# 维度1：密度校验（原有）- 核心链路描述行数/条数
+CHAIN_SECTION=$(awk '/^## .*核心链路|^## .*核心逻辑/{found=1} found{print} /^## /{if(found && NR>1 && !/核心链路|核心逻辑/) exit}' "$KB_FILE" 2>/dev/null || true)
+CHAIN_COUNT=$(echo "$CHAIN_SECTION" | grep -cE '^### |^- \*\*' 2>/dev/null || echo "0")
+CHAIN_LINES=$(echo "$CHAIN_SECTION" | wc -l | tr -d ' ' || echo "0")
+
+if [ "$CHAIN_COUNT" -gt 0 ]; then
+  AVG_DENSITY=$((CHAIN_LINES / CHAIN_COUNT))
+  if [ "$AVG_DENSITY" -ge 10 ]; then
+    print_pass "链路描述密度达标（${AVG_DENSITY} 行/条，阈值 ≥10）"
+  else
+    print_warn "链路描述密度不足（${AVG_DENSITY} 行/条，阈值 ≥10）"
+  fi
+fi
+
+# 维度2：待补充分类检查（issue-004 新增）
+# 检查"待补充"章节是否区分了"核心子场景"和"实现细节"
+PENDING_SECTION=$(awk '/^## 待补充/{found=1} found{print} /^## /{if(found && NR>1 && !/待补充/) exit}' "$KB_FILE" 2>/dev/null || true)
+
+if [ -n "$PENDING_SECTION" ]; then
+  # 检查是否有分类标记
+  if echo "$PENDING_SECTION" | grep -qE '核心子场景|实现细节' 2>/dev/null; then
+    print_pass "待补充章节已分类（核心子场景 / 实现细节）"
+
+    # 统计核心子场景条目数
+    CORE_PENDING=$(echo "$PENDING_SECTION" | awk '/核心子场景/{in_core=1; next} /实现细节/{in_core=0} in_core && /^- /{count++} END{print count+0}')
+    if [ "$CORE_PENDING" -le 2 ]; then
+      print_pass "核心子场景待补充 ≤ 2 条（${CORE_PENDING} 条）"
+    else
+      print_fail "核心子场景待补充 > 2 条（${CORE_PENDING} 条），不允许标记为「已完成」"
+    fi
+  else
+    print_warn "待补充章节未区分「核心子场景」和「实现细节」（issue-004 要求分类）"
+  fi
+fi
+
+# 维度3：覆盖率校验（需要 .summary.json 支持）
+if [ -f "$SUMMARY_FILE" ] && command -v python3 &>/dev/null; then
+  COVERAGE_RATE=$(python3 -c "
+import json
+try:
+    data = json.load(open('$SUMMARY_FILE'))
+    report = data.get('coverageReport', {})
+    rate = report.get('methodCoverage', '0%')
+    rate_num = int(rate.replace('%','').replace('unknown','0') or '0')
+    print(rate_num)
+except: print(0)
+" 2>/dev/null || echo "0")
+
+  if [ "$COVERAGE_RATE" -ge 70 ]; then
+    print_pass "方法覆盖率达标（${COVERAGE_RATE}%，阈值 ≥70%）"
+  else
+    print_warn "方法覆盖率不足（${COVERAGE_RATE}%，阈值 ≥70%）"
+  fi
+fi
+
+# ============================================
 # 汇总输出
 # ============================================
 if [ "$JSON_OUTPUT" = true ]; then

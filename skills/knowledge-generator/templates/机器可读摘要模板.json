@@ -1,10 +1,11 @@
 {
-  "$comment": "机器可读摘要模板 v2.2.0 | AI 消费知识库的首要入口，与 .md 文件同级生成",
+  "$comment": "机器可读摘要模板 v2.3.0 | AI 消费知识库的首要入口，与 .md 文件同级生成",
   "$comment2": "所有路径必须是项目内相对路径；grepHints 必须是可直接执行的 grep/rg 命令",
+  "$comment3": "coverageReport 是 v2.3.0 新增字段，用于覆盖率自检和领域完成判定",
   "domain": "{领域名称，如：发票冲红}",
   "docFile": "{对应的人类可读文档相对路径，如：docs/knowledge/业务领域/发票冲红/发票冲红主链路.md}",
   "generatedAt": "{生成时间，ISO 8601 格式}",
-  "generatorVersion": "2.2.0",
+  "generatorVersion": "2.3.0",
 
   "summary": "{一句话描述本领域解决什么问题，≤80字}",
 
@@ -94,10 +95,37 @@
     }
   ],
 
+  "coverageReport": {
+    "$comment": "覆盖率自检报告（issue-003/004 新增），subagent 必须填写，主流程据此判断是否需要补充阅读",
+    "totalPublicMethods": "{核心入口类的 public 方法总数}",
+    "readMethods": "{已读取/覆盖的方法数}",
+    "methodCoverage": "{方法覆盖率百分比，如：85%}",
+    "unreadMethods": [
+      {
+        "method": "{未读方法名}",
+        "reason": "{未读原因，如：位于类尾部第888行超出读取窗口 / 标注@Deprecated}"
+      }
+    ],
+    "identifiedVariants": [
+      {
+        "business": "{业务名称，如：冲红}",
+        "variants": ["{变体方法名列表，如：openRedInvoice, applyPartRedRush, fastInvoiceRedRush}"]
+      }
+    ],
+    "tracedChains": [
+      {
+        "entry": "{入口方法名}",
+        "depth": "{追踪深度，如：4}",
+        "classes": ["{调用链涉及的类名列表}"]
+      }
+    ]
+  },
+
   "coverageGaps": [
     {
       "gap": "{已知未覆盖的子场景描述}",
-      "reason": "{未覆盖原因，如：待二方库确认、逻辑过于复杂待拆分}"
+      "reason": "{未覆盖原因，如：待二方库确认、逻辑过于复杂待拆分}",
+      "gapType": "core|detail"
     }
   ]
 }

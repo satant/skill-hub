@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 #
-# 业务动词聚类扫描器（A2）
-# 从项目源码中提取方法名，按业务动词（create/update/cancel/audit/query...）聚类，
-# 帮助识别同一业务领域的跨模块方法集合。
+# 业务方法三维聚类扫描器（A2 v2.3.0）
+# 从项目源码中提取方法名，按三个维度聚类：
+#   维度1：动词聚类（原有）- open/apply/check/build/query 等
+#   维度2：业务名词聚类（新增）- Red/RedRush/Invalid/Invoice 等
+#   维度3：修饰词变体标注（新增）- Part/Fast/Direct/ISV/Pre 等
+#
+# 解决问题：issue-005 方法级业务变体识别缺失，单一动词聚类无法发现变体关系
+# 升级原因：applyPartRedRush/applyRedRush/openRedInvoice 都是冲红变体，但动词不同
 #
 # 用法: bash cluster-by-business-verb.sh <源码目录> [输出文件]
 # 依赖: grep, awk, find（均为系统自带）
@@ -17,68 +22,293 @@ if [ -z "$SRC_DIR" ] || [ ! -d "$SRC_DIR" ]; then
   exit 1
 fi
 
-# 定义业务动词分类
-# 格式: "动词模式|聚类名称"
+# ============================================
+# 维度定义
+# ============================================
+
+# 维度1：动词分类（原有，保留兼容）
 VERB_PATTERNS=(
   "create|insert|add|save|build|generate|init|register|apply|submit|open|start|开启|创建|新增|提交|申请|发起"
-  "update|modify|change|edit|adjust|set|switch|transfer|modify|变更|修改|调整|切换|转移"
+  "update|modify|change|edit|adjust|set|switch|transfer|变更|修改|调整|切换|转移"
   "cancel|revoke|void|close|stop|end|terminate|abort|撤销|取消|关闭|终止"
   "audit|approve|reject|review|check|verify|confirm|validate|审核|审批|驳回|校验|确认"
   "query|get|find|list|search|count|detail|fetch|查询|获取|检索|统计"
   "delete|remove|drop|clear|clean|purge|删除|清除|清理"
-  "pay|charge|refund|settle|reconcile|transfer|reverse|支付|计费|退款|结算|冲正|对账"
+  "pay|charge|refund|settle|reconcile|reverse|支付|计费|退款|结算|冲正|对账"
   "send|push|notify|callback|dispatch|发送|推送|通知|回调"
-  "sync|refresh|reload|import|export|sync|迁移|同步|刷新|导入|导出"
+  "sync|refresh|reload|import|export|迁移|同步|刷新|导入|导出"
   "process|handle|execute|run|do|trigger|calc|compute|处理|执行|计算|触发"
 )
 
+# 维度2：业务名词族（新增）
+# 用于识别同一业务的不同方法变体
+NOUN_PATTERNS=(
+  "Red|RedRush|RedBill|冲红|红字"
+  "Invalid|Cancel|Void|作废|撤销"
+  "Invoice|Bill|发票|账单"
+  "Sign|Signature|签章"
+  "Tax|税务|税目"
+  "Config|Setting|配置"
+  "Order|订单"
+  "Pay|Payment|支付"
+  "Refund|退款"
+  "Notify|Message|通知|消息"
+)
+
+# 维度3：修饰词变体标注（新增）
+# 用于区分同一业务的不同变体
+MODIFIER_PATTERNS=(
+  "Part|Partial|部分"
+  "Fast|快速|快捷"
+  "Direct|直接|自营"
+  "ISV|Isv|isv"
+  "Pre|预"
+  "Batch|批量"
+  "Async|异步"
+  "Sync|同步"
+  "Auto|自动"
+  "Manual|手动"
+)
+
 {
-  echo "# 业务动词聚类报告"
+  echo "# 业务方法三维聚类报告（A2 v2.3.0）"
   echo "# 生成时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "# 源码目录: $SRC_DIR"
+  echo "# 维度1: 动词聚类（open/apply/check...）"
+  echo "# 维度2: 业务名词聚类（Red/Invalid/Invoice...）"
+  echo "# 维度3: 修饰词变体标注（Part/Fast/Direct/ISV...）"
+  echo ""
+
+  # ============================================
+  # 收集所有方法名
+  # ============================================
+  TMP_ALL_METHODS=$(mktemp)
+
+  find "$SRC_DIR" -name "*.java" -type f 2>/dev/null \
+    | while IFS= read -r FILE; do
+        CLASS_NAME=$(basename "$FILE" .java)
+        REL_PATH="${FILE#$SRC_DIR/}"
+        grep -nE "(public|protected).*(void|[A-Z][A-Za-z0-9<>]*)\s+([a-z]+[A-Za-z0-9]*)\s*\(" "$FILE" 2>/dev/null \
+          | grep -v 'class ' \
+          | grep -v 'interface ' \
+          | while IFS= read -r line; do
+              LINE_NUM=$(echo "$line" | cut -d: -f1)
+              METHOD_FULL=$(echo "$line" | sed -E 's/.*\s([a-z]+[A-Za-z0-9]*)\s*\(.*/\1/' || true)
+              if [ -n "$METHOD_FULL" ]; then
+                echo "${METHOD_FULL}|${CLASS_NAME}|${REL_PATH}|${LINE_NUM}"
+              fi
+            done
+      done > "$TMP_ALL_METHODS"
+
+  TOTAL_METHODS=$(wc -l < "$TMP_ALL_METHODS" | tr -d ' ')
+
+  echo "## 总览"
+  echo ""
+  echo "- 扫描方法总数: ${TOTAL_METHODS}"
+  echo ""
+
+  # ============================================
+  # 维度1：动词聚类（原有逻辑，保留兼容）
+  # ============================================
+  echo "## 维度1：动词聚类"
+  echo ""
+  echo "> 按方法名的动词前缀分组，识别同类型操作。"
   echo ""
 
   for ENTRY in "${VERB_PATTERNS[@]}"; do
     CLUSTER_NAME="${ENTRY%%|*}"
     PATTERN="${ENTRY#*|}"
 
-    # PATTERN 已是 grep -E 兼容的正则（| 分隔的备选项），无需额外转换
-
-    # 临时存储当前聚类的匹配结果（先收集再计数输出）
     TMP_MATCHES=$(mktemp)
-
-    # 搜索所有 Java 文件（不做文件数量截断，保证跨模块信号完整性）
-    find "$SRC_DIR" -name "*.java" -type f 2>/dev/null \
-      | while IFS= read -r FILE; do
-          # 提取 public/protected 方法签名
-          grep -nE "(public|protected).*(void|[A-Z][A-Za-z0-9<>]*)\s+([a-z]+[A-Za-z0-9]*)\s*\(" "$FILE" 2>/dev/null \
-            | while IFS= read -r LINE; do
-                METHOD_FULL=$(echo "$LINE" | sed -E 's/.*\s([a-z]+[A-Za-z0-9]*)\s*\(.*/\1/' || true)
-                # 检查方法名是否匹配当前聚类模式
-                if echo "$METHOD_FULL" | grep -iqE "^($PATTERN)"; then
-                  CLASS_NAME=$(basename "$FILE" .java)
-                  REL_PATH="${FILE#$SRC_DIR/}"
-                  echo "| ${METHOD_FULL} | ${CLASS_NAME} | ${REL_PATH} |"
-                fi
-              done
+    grep -iE "^([a-z]+).*(${PATTERN})" "$TMP_ALL_METHODS" 2>/dev/null \
+      | while IFS='|' read -r METHOD CLASS PATH LINE; do
+          if echo "$METHOD" | grep -iqE "^(${PATTERN})"; then
+            echo "| ${METHOD} | ${CLASS} | ${PATH} |"
+          fi
         done > "$TMP_MATCHES"
 
     MATCH_COUNT=$(wc -l < "$TMP_MATCHES" | tr -d ' ')
 
-    echo "## 聚类：${CLUSTER_NAME}（${MATCH_COUNT} 个方法）"
-    echo ""
-    echo "| 方法名 | 所在类 | 文件路径 |"
-    echo "| --- | --- | --- |"
-    cat "$TMP_MATCHES"
+    if [ "$MATCH_COUNT" -gt 0 ]; then
+      echo "### 聚类：${CLUSTER_NAME}（${MATCH_COUNT} 个方法）"
+      echo ""
+      echo "| 方法名 | 所在类 | 文件路径 |"
+      echo "| --- | --- | --- |"
+      cat "$TMP_MATCHES"
+      echo ""
+    fi
     rm -f "$TMP_MATCHES"
-    echo ""
   done
 
+  # ============================================
+  # 维度2：业务名词聚类（新增）
+  # ============================================
+  echo "## 维度2：业务名词聚类"
+  echo ""
+  echo "> 按方法名包含的业务名词分组，识别同一业务族的不同方法。"
+  echo "> 同一业务名词族的方法可能是业务变体，需要追踪独立调用链。"
+  echo ""
+
+  for NOUN_ENTRY in "${NOUN_PATTERNS[@]}"; do
+    NOUN_NAME="${NOUN_ENTRY%%|*}"
+    NOUN_PATTERN="${NOUN_ENTRY#*|}"
+
+    TMP_MATCHES=$(mktemp)
+    grep -iE "(${NOUN_PATTERN})" "$TMP_ALL_METHODS" 2>/dev/null \
+      | while IFS='|' read -r METHOD CLASS PATH LINE; do
+          echo "| ${METHOD} | ${CLASS} | ${PATH} |"
+        done > "$TMP_MATCHES"
+
+    MATCH_COUNT=$(wc -l < "$TMP_MATCHES" | tr -d ' ')
+
+    if [ "$MATCH_COUNT" -gt 0 ]; then
+      echo "### 业务族：${NOUN_NAME}（${MATCH_COUNT} 个方法）"
+      echo ""
+      echo "| 方法名 | 所在类 | 文件路径 |"
+      echo "| --- | --- | --- |"
+      cat "$TMP_MATCHES"
+      echo ""
+    fi
+    rm -f "$TMP_MATCHES"
+  done
+
+  # ============================================
+  # 维度3：修饰词变体标注（新增）
+  # ============================================
+  echo "## 维度3：修饰词变体标注"
+  echo ""
+  echo "> 识别方法名中的修饰词，标记业务变体类型。"
+  echo "> 修饰词（Part/Fast/Direct/ISV/Pre）是区分业务变体的关键。"
+  echo ""
+
+  echo "### 变体方法清单"
+  echo ""
+  echo "| 方法名 | 动词前缀 | 业务名词 | 修饰词 | 变体类型 | 所在类 |"
+  echo "| --- | --- | --- | --- | --- | --- |"
+
+  while IFS='|' read -r METHOD CLASS PATH LINE; do
+    [ -z "$METHOD" ] && continue
+
+    # 提取动词前缀
+    VERB=$(echo "$METHOD" | sed -E 's/^([a-z]+).*/\1/' || echo "")
+
+    # 识别业务名词
+    BUSINESS_NOUN="-"
+    for NOUN_ENTRY in "${NOUN_PATTERNS[@]}"; do
+      NOUN_PATTERN="${NOUN_ENTRY#*|}"
+      if echo "$METHOD" | grep -iqE "(${NOUN_PATTERN})"; then
+        BUSINESS_NOUN="${NOUN_ENTRY%%|*}"
+        break
+      fi
+    done
+
+    # 识别修饰词
+    MODIFIER="-"
+    VARIANT_TYPE="默认/完整"
+    for MOD_ENTRY in "${MODIFIER_PATTERNS[@]}"; do
+      MOD_PATTERN="${MOD_ENTRY%%|*}"
+      MOD_LABEL="${MOD_ENTRY#*|}"
+      if echo "$METHOD" | grep -iqE "(${MOD_PATTERN})"; then
+        MODIFIER="${MOD_PATTERN}"
+        # 映射变体类型
+        case "$MOD_PATTERN" in
+          Part|Partial) VARIANT_TYPE="部分变体" ;;
+          Fast) VARIANT_TYPE="快捷变体" ;;
+          Direct) VARIANT_TYPE="自营变体" ;;
+          ISV|Isv|isv) VARIANT_TYPE="ISV变体" ;;
+          Pre) VARIANT_TYPE="预操作变体" ;;
+          Batch) VARIANT_TYPE="批量变体" ;;
+          Async) VARIANT_TYPE="异步变体" ;;
+          Sync) VARIANT_TYPE="同步变体" ;;
+          Auto) VARIANT_TYPE="自动变体" ;;
+          Manual) VARIANT_TYPE="手动变体" ;;
+        esac
+        break
+      fi
+    done
+
+    # 只输出包含修饰词的方法（有变体特征的）
+    if [ "$MODIFIER" != "-" ]; then
+      echo "| ${METHOD} | ${VERB} | ${BUSINESS_NOUN} | ${MODIFIER} | ${VARIANT_TYPE} | ${CLASS} |"
+    fi
+  done < "$TMP_ALL_METHODS"
+
+  echo ""
+
+  # ============================================
+  # 交叉输出：业务变体矩阵
+  # ============================================
+  echo "## 业务变体矩阵（维度交叉）"
+  echo ""
+  echo "> 同一业务名词族下的方法，按修饰词分组，识别完整/部分/快捷等变体。"
+  echo "> AI 必须为每个变体追踪独立调用链，不可合并描述。"
+  echo ""
+
+  for NOUN_ENTRY in "${NOUN_PATTERNS[@]}"; do
+    NOUN_NAME="${NOUN_ENTRY%%|*}"
+    NOUN_PATTERN="${NOUN_ENTRY#*|}"
+
+    # 收集该业务名词族的所有方法
+    TMP_NOUN_METHODS=$(mktemp)
+    grep -iE "(${NOUN_PATTERN})" "$TMP_ALL_METHODS" 2>/dev/null > "$TMP_NOUN_METHODS"
+    NOUN_COUNT=$(wc -l < "$TMP_NOUN_METHODS" | tr -d ' ')
+
+    if [ "$NOUN_COUNT" -gt 0 ]; then
+      echo "### ${NOUN_NAME} 业务族（${NOUN_COUNT} 个方法）"
+      echo ""
+      echo "| 方法名 | 动词 | 修饰词 | 变体类型 |"
+      echo "| --- | --- | --- | --- |"
+
+      while IFS='|' read -r METHOD CLASS PATH LINE; do
+        [ -z "$METHOD" ] && continue
+        VERB=$(echo "$METHOD" | sed -E 's/^([a-z]+).*/\1/' || echo "")
+
+        MODIFIER="-"
+        VARIANT_TYPE="默认/完整"
+        for MOD_ENTRY in "${MODIFIER_PATTERNS[@]}"; do
+          MOD_PATTERN="${MOD_ENTRY%%|*}"
+          if echo "$METHOD" | grep -iqE "(${MOD_PATTERN})"; then
+            MODIFIER="${MOD_PATTERN}"
+            case "$MOD_PATTERN" in
+              Part|Partial) VARIANT_TYPE="部分变体" ;;
+              Fast) VARIANT_TYPE="快捷变体" ;;
+              Direct) VARIANT_TYPE="自营变体" ;;
+              ISV|Isv|isv) VARIANT_TYPE="ISV变体" ;;
+              Pre) VARIANT_TYPE="预操作变体" ;;
+              Batch) VARIANT_TYPE="批量变体" ;;
+              Async) VARIANT_TYPE="异步变体" ;;
+              Sync) VARIANT_TYPE="同步变体" ;;
+              Auto) VARIANT_TYPE="自动变体" ;;
+              Manual) VARIANT_TYPE="手动变体" ;;
+            esac
+            break
+          fi
+        done
+
+        echo "| ${METHOD} | ${VERB} | ${MODIFIER} | ${VARIANT_TYPE} |"
+      done < "$TMP_NOUN_METHODS"
+
+      echo ""
+      rm -f "$TMP_NOUN_METHODS"
+    fi
+  done
+
+  rm -f "$TMP_ALL_METHODS"
+
+  # ============================================
+  # AI 处理指引
+  # ============================================
   echo "## AI 处理指引"
-  echo "1. 上述聚类展示了项目中按业务动词分组的方法分布"
-  echo "2. 同一聚类中跨模块出现的方法，可能属于同一业务领域"
-  echo "3. 结合业务术语字典（extract-business-terms.sh 输出）进行交叉验证"
-  echo "4. 高频出现的'动词+名词'组合（如 applyRedRush、cancelRedRush）是领域边界的强信号"
+  echo ""
+  echo "1. **维度1 动词聚类**：识别同类型操作，用于领域边界判定"
+  echo "2. **维度2 业务名词聚类**：识别同一业务族的不同方法，是变体识别的核心输入"
+  echo "3. **维度3 修饰词标注**：区分同一业务的不同变体（完整/部分/快捷/ISV等）"
+  echo "4. **变体矩阵**：对每个业务族的变体，必须："
+  echo "   - 追踪每个变体的独立调用链（Controller → Service → Manager → DAO）"
+  echo "   - 在知识库文档中为每个变体写独立的「核心链路」"
+  echo "   - 在状态流转章节标注变体的状态差异"
+  echo "   - 明确说明变体之间的差异（如：部分冲红只冲红部分明细，完整冲红冲红全部）"
+  echo "5. **A8 业务变体识别**：基于本报告的维度2+维度3，执行变体全覆盖检查"
 } > "$OUTPUT_FILE"
 
-echo "业务动词聚类完成，输出到: $OUTPUT_FILE" >&2
+echo "业务方法三维聚类完成，输出到: $OUTPUT_FILE" >&2

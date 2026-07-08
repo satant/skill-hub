@@ -270,6 +270,32 @@ except: print(0)
   else
     print_warn "方法覆盖率不足（${COVERAGE_RATE}%，阈值 ≥70%）"
   fi
+
+  # 维度4：待补充与 coverageGaps 一致性校验（v2.3.0 新增）
+  # 检查 .md 的待补充章节是否与 .summary.json 的 coverageGaps 保持一致
+  COVERAGE_GAPS_COUNT=$(python3 -c "
+import json
+try:
+    data = json.load(open('$SUMMARY_FILE'))
+    gaps = data.get('coverageGaps', [])
+    print(len(gaps))
+except: print(0)
+" 2>/dev/null || echo "0")
+
+  HAS_PENDING_SECTION=0
+  if grep -q "## 待补充" "$KB_FILE" 2>/dev/null; then
+    HAS_PENDING_SECTION=1
+  fi
+
+  if [ "$COVERAGE_GAPS_COUNT" -eq 0 ] && [ "$HAS_PENDING_SECTION" -eq 1 ]; then
+    print_warn "coverageGaps 为空但 .md 仍有「待补充」章节（建议删除空壳章节）"
+  elif [ "$COVERAGE_GAPS_COUNT" -gt 0 ] && [ "$HAS_PENDING_SECTION" -eq 0 ]; then
+    print_warn "coverageGaps 非空但 .md 无「待补充」章节（建议补充或确认 coverageGaps）"
+  elif [ "$COVERAGE_GAPS_COUNT" -eq 0 ] && [ "$HAS_PENDING_SECTION" -eq 0 ]; then
+    print_pass "待补充与 coverageGaps 一致（均为空，领域已充分覆盖）"
+  else
+    print_pass "待补充与 coverageGaps 一致（均非空）"
+  fi
 fi
 
 # ============================================

@@ -108,9 +108,10 @@ fi
             }' \
           | sort -u || true)
 
-        MODULE_COUNT=$(echo "$MODULES" | grep -v '^$' | wc -l | tr -d ' ' || echo "0")
+        MODULE_COUNT=$(echo "$MODULES" | grep -v '^$' | wc -l 2>/dev/null | tr -d ' ' || echo "0")
+        MODULE_COUNT="${MODULE_COUNT:-0}"
 
-        if [ "$MODULE_COUNT" -gt 1 ]; then
+        if [ "${MODULE_COUNT:-0}" -gt 1 ] 2>/dev/null; then
           MODULE_LIST=$(echo "$MODULES" | grep -v '^$' | tr '\n' ', ' | sed 's/,$//')
           echo "| ${CLASS_NAME} | ${MODULE_LIST} | ${MODULE_COUNT} | **是** | 需 AI 判定主领域 |"
         fi
@@ -131,8 +132,8 @@ fi
   echo "| 枚举类 | 枚举值 | 引用类数 | 涉及模块 | 建议处理 |"
   echo "| --- | --- | --- | --- | --- |"
 
-  # 查找所有 Enum 类
-  find "$SRC_DIR" -name "*Enum.java" -o -name "*Status.java" -o -name "*Type.java" 2>/dev/null \
+  # 查找所有 Enum 类（find -o 需要用括号分组确保 -type f 对所有条件生效）
+  find "$SRC_DIR" \( -name "*Enum.java" -o -name "*Status.java" -o -name "*Type.java" \) -type f 2>/dev/null \
     | while IFS= read -r ENUM_FILE; do
         [ -z "$ENUM_FILE" ] && continue
         ENUM_NAME=$(basename "$ENUM_FILE" .java)
@@ -144,9 +145,10 @@ fi
           echo "$ENUM_VALUES" | while IFS= read -r ENUM_VAL; do
             [ -z "$ENUM_VAL" ] && continue
             # 统计引用该枚举值的类数量
-            REF_COUNT=$(grep -rl "${ENUM_NAME}\.${ENUM_VAL}" "$SRC_DIR" --include='*.java' 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            REF_COUNT=$(grep -rl "${ENUM_NAME}\.${ENUM_VAL}" "$SRC_DIR" --include='*.java' 2>/dev/null | wc -l 2>/dev/null | tr -d ' ' || echo "0")
+            REF_COUNT="${REF_COUNT:-0}"
 
-            if [ "$REF_COUNT" -ge 5 ]; then
+            if [ "${REF_COUNT:-0}" -ge 5 ] 2>/dev/null; then
               # 提取涉及模块
               REF_MODULES=$(grep -rl "${ENUM_NAME}\.${ENUM_VAL}" "$SRC_DIR" --include='*.java' 2>/dev/null \
                 | sed "s|$SRC_DIR/||" \

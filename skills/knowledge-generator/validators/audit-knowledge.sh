@@ -59,7 +59,7 @@ for KB in $KB_FILES; do
   CLASS_REFS=$(grep -oE '(com|org|net|io|cn)\.[a-zA-Z0-9_.]+[A-Z][a-zA-Z0-9_]*' "$KB" 2>/dev/null | sort -u || true)
 
   if [ -n "$CLASS_REFS" ]; then
-    while IFS= read -ref; do
+    while IFS= read -r ref; do
       [ -z "$ref" ] && continue
       REL_PATH=$(echo "$ref" | tr '.' '/')
       FOUND=$(find "$SRC_DIR" -path "*/${REL_PATH}.java" -type f 2>/dev/null | head -1 || true)
@@ -89,7 +89,7 @@ for KB in $KB_FILES; do
   FILE_REFS=$(grep -oE '`[^`]*(src/|/main/|/test/)[^`]*`' "$KB" 2>/dev/null | sed 's/`//g' | sort -u || true)
 
   if [ -n "$FILE_REFS" ]; then
-    while IFS= read -ref; do
+    while IFS= read -r ref; do
       [ -z "$ref" ] && continue
       if [ ! -f "${SRC_DIR}/${ref}" ] && [ ! -f "$ref" ]; then
         echo "| $KB_NAME | $ref | 文件路径不存在 | 更新或删除引用 |"
@@ -106,7 +106,7 @@ for KB in $KB_FILES; do
   METHOD_REFS=$(grep -oE '[A-Z][a-zA-Z0-9]+\.[a-z][a-zA-Z0-9]*\(\)' "$KB" 2>/dev/null | sort -u || true)
 
   if [ -n "$METHOD_REFS" ]; then
-    while IFS= read -ref; do
+    while IFS= read -r ref; do
       [ -z "$ref" ] && continue
       CLASS_PART=$(echo "$ref" | sed 's/\..*//' || true)
       METHOD_PART=$(echo "$ref" | sed 's/.*\.//;s/()//' || true)

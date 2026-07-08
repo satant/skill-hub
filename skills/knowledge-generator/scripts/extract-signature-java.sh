@@ -16,12 +16,16 @@ fi
 
 # 收集所有 .java 文件
 if [ -d "$TARGET" ]; then
-  FILES=$(find "$TARGET" -name "*.java" -type f 2>/dev/null || true)
+  # 用 while read 避免空格断裂（兼容 Git Bash 3.x 无 mapfile）
+  FILES=()
+  while IFS= read -r f; do
+    FILES+=("$f")
+  done < <(find "$TARGET" -name "*.java" -type f 2>/dev/null || true)
 else
-  FILES="$TARGET"
+  FILES=("$TARGET")
 fi
 
-if [ -z "$FILES" ]; then
+if [ ${#FILES[@]} -eq 0 ]; then
   echo '{"files":[]}'
   exit 0
 fi
@@ -29,7 +33,7 @@ fi
 echo -n '{"files":['
 FIRST_FILE=1
 
-for FILE in $FILES; do
+for FILE in "${FILES[@]}"; do
   [ -f "$FILE" ] || continue
 
   [ "$FIRST_FILE" -eq 0 ] && echo -n ','
@@ -51,17 +55,21 @@ for FILE in $FILES; do
   echo -n "{\"file\":\"$FILE\",\"package\":\"${PKG:-}\",\"className\":\"${CLASS_NAME:-}\",\"classDoc\":\"${CLASS_DOC:-}\",\"methods\":["
 
   # 提取 public/protected 方法签名
-  FIRST_METHOD=1
-  grep -nE '^\s*(public|protected)\s+(static\s+)?(synchronized\s+)?(final\s+)?[A-Za-z0-9_<>\[\],?\s]+\s+[a-zA-Z0-9_]+\s*\(' "$FILE" 2>/dev/null \
+  METHODS_OUTPUT=$(grep -nE '^\s*(public|protected)\s+(static\s+)?(synchronized\s+)?(final\s+)?[A-Za-z0-9_<>\[\],?\s]+\s+[a-zA-Z0-9_]+\s*\(' "$FILE" 2>/dev/null \
     | grep -v '^\s*.*class ' \
     | grep -v '^\s*.*interface ' \
-    | while IFS= read -r line; do
-        LINE_NUM=$(echo "$line" | cut -d: -f1)
-        SIGNATURE=$(echo "$line" | cut -d: -f2- | sed 's/^[[:space:]]*//' | sed 's/"/\\"/g')
-        [ "$FIRST_METHOD" -eq 0 ] && echo -n ','
-        FIRST_METHOD=0
-        echo -n "{\"line\":$LINE_NUM,\"signature\":\"${SIGNATURE}\"}"
-      done
+    | grep -v '^\s*.*enum ' || true)
+
+  FIRST_METHOD=1
+  if [ -n "$METHODS_OUTPUT" ]; then
+    while IFS= read -r line; do
+      LINE_NUM=$(echo "$line" | cut -d: -f1)
+      SIGNATURE=$(echo "$line" | cut -d: -f2- | sed 's/^[[:space:]]*//' | sed 's/"/\\"/g')
+      [ "$FIRST_METHOD" -eq 0 ] && echo -n ','
+      FIRST_METHOD=0
+      echo -n "{\"line\":$LINE_NUM,\"signature\":\"${SIGNATURE}\"}"
+    done <<< "$METHODS_OUTPUT"
+  fi
 
   echo -n ']}'
 done

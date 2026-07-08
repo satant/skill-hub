@@ -30,6 +30,21 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+# 检查依赖工具
+if ! command -v unzip &>/dev/null; then
+  echo "错误: unzip 未安装" >&2
+  echo "  macOS:    brew install unzip" >&2
+  echo "  Ubuntu:   sudo apt-get install unzip" >&2
+  echo "  Windows:  通过 Git Bash 或安装 7-Zip" >&2
+  exit 1
+fi
+
+if ! command -v javap &>/dev/null; then
+  echo "错误: javap 未找到，需要 JDK 环境" >&2
+  echo "  请确认 JDK 已安装且 bin 目录在 PATH 中" >&2
+  exit 1
+fi
+
 JAR_FILE=""
 
 # ============================================
@@ -74,8 +89,8 @@ COMPLIANCE_FILE="${OUTPUT_DIR}/COMPLIANCE.md"
 LICENSE_STATUS="unknown"
 
 # 解压检查 LICENSE/NOTICE 文件（仅解压 META-INF，不全量解压）
-TMP_DIR=$(mktemp -d)
-trap "rm -rf $TMP_DIR" EXIT
+TMP_DIR=$(mktemp -d 2>/dev/null || mktemp -d -t kbgit)
+trap 'rm -rf "$TMP_DIR"' EXIT
 
 # 只解压 META-INF 目录（含 LICENSE/NOTICE）
 unzip -q "$JAR_FILE" 'META-INF/*' -d "$TMP_DIR" 2>/dev/null || true

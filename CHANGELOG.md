@@ -56,6 +56,7 @@
 - coverageGaps 新增 **gapType 字段**（core/detail）区分核心子场景和实现细节
 
 ### 变更
+- **明确声明适用语言为 Java / JVM 系**：SKILL.md 顶部和模板表增加适用范围声明，清理多语言映射说明（避免误导非 JVM 项目用户）
 - **A2 升级为三维聚类**（issue-005）：从单一动词聚类升级为动词+业务名词+修饰词三维交叉
   - 维度2：业务名词族（Red/Invalid/Invoice/Sign/Tax 等）
   - 维度3：修饰词变体标注（Part/Fast/Direct/ISV/Pre 等）

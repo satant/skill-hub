@@ -27,32 +27,33 @@ fi
 # ============================================
 
 # 维度1：动词分类（原有，保留兼容）
+# 格式："聚类名称|动词正则"（用第一个 | 分割，左边是聚类名，右边是正则）
 VERB_PATTERNS=(
-  "create|insert|add|save|build|generate|init|register|apply|submit|open|start|开启|创建|新增|提交|申请|发起"
-  "update|modify|change|edit|adjust|set|switch|transfer|变更|修改|调整|切换|转移"
-  "cancel|revoke|void|close|stop|end|terminate|abort|撤销|取消|关闭|终止"
-  "audit|approve|reject|review|check|verify|confirm|validate|审核|审批|驳回|校验|确认"
-  "query|get|find|list|search|count|detail|fetch|查询|获取|检索|统计"
-  "delete|remove|drop|clear|clean|purge|删除|清除|清理"
-  "pay|charge|refund|settle|reconcile|reverse|支付|计费|退款|结算|冲正|对账"
-  "send|push|notify|callback|dispatch|发送|推送|通知|回调"
-  "sync|refresh|reload|import|export|迁移|同步|刷新|导入|导出"
-  "process|handle|execute|run|do|trigger|calc|compute|处理|执行|计算|触发"
+  "创建类|create|insert|add|save|build|generate|init|register|apply|submit|open|start|开启|创建|新增|提交|申请|发起"
+  "变更类|update|modify|change|edit|adjust|set|switch|transfer|变更|修改|调整|切换|转移"
+  "撤销类|cancel|revoke|void|close|stop|end|terminate|abort|撤销|取消|关闭|终止"
+  "审核类|audit|approve|reject|review|check|verify|confirm|validate|审核|审批|驳回|校验|确认"
+  "查询类|query|get|find|list|search|count|detail|fetch|查询|获取|检索|统计"
+  "删除类|delete|remove|drop|clear|clean|purge|删除|清除|清理"
+  "财务类|pay|charge|refund|settle|reconcile|reverse|支付|计费|退款|结算|冲正|对账"
+  "消息类|send|push|notify|callback|dispatch|发送|推送|通知|回调"
+  "同步类|sync|refresh|reload|import|export|迁移|同步|刷新|导入|导出"
+  "处理类|process|handle|execute|run|do|trigger|calc|compute|处理|执行|计算|触发"
 )
 
 # 维度2：业务名词族（新增）
-# 用于识别同一业务的不同方法变体
+# 格式："族名称|名词正则"
 NOUN_PATTERNS=(
-  "Red|RedRush|RedBill|冲红|红字"
-  "Invalid|Cancel|Void|作废|撤销"
-  "Invoice|Bill|发票|账单"
-  "Sign|Signature|签章"
-  "Tax|税务|税目"
-  "Config|Setting|配置"
-  "Order|订单"
-  "Pay|Payment|支付"
-  "Refund|退款"
-  "Notify|Message|通知|消息"
+  "冲红|Red|RedRush|RedBill|冲红|红字"
+  "作废|Invalid|Cancel|Void|作废|撤销"
+  "发票|Invoice|Bill|发票|账单"
+  "签章|Sign|Signature|签章"
+  "税务|Tax|税务|税目"
+  "配置|Config|Setting|配置"
+  "订单|Order|订单"
+  "支付|Pay|Payment|支付"
+  "退款|Refund|退款"
+  "通知|Notify|Message|通知|消息"
 )
 
 # 维度3：修饰词变体标注（新增）
@@ -82,7 +83,7 @@ MODIFIER_PATTERNS=(
   # ============================================
   # 收集所有方法名
   # ============================================
-  TMP_ALL_METHODS=$(mktemp)
+  TMP_ALL_METHODS=$(mktemp 2>/dev/null || mktemp -t kbgit)
 
   find "$SRC_DIR" -name "*.java" -type f 2>/dev/null \
     | while IFS= read -r FILE; do
@@ -119,7 +120,7 @@ MODIFIER_PATTERNS=(
     CLUSTER_NAME="${ENTRY%%|*}"
     PATTERN="${ENTRY#*|}"
 
-    TMP_MATCHES=$(mktemp)
+    TMP_MATCHES=$(mktemp 2>/dev/null || mktemp -t kbgit)
     grep -iE "^([a-z]+).*(${PATTERN})" "$TMP_ALL_METHODS" 2>/dev/null \
       | while IFS='|' read -r METHOD CLASS PATH LINE; do
           if echo "$METHOD" | grep -iqE "^(${PATTERN})"; then
@@ -153,7 +154,7 @@ MODIFIER_PATTERNS=(
     NOUN_NAME="${NOUN_ENTRY%%|*}"
     NOUN_PATTERN="${NOUN_ENTRY#*|}"
 
-    TMP_MATCHES=$(mktemp)
+    TMP_MATCHES=$(mktemp 2>/dev/null || mktemp -t kbgit)
     grep -iE "(${NOUN_PATTERN})" "$TMP_ALL_METHODS" 2>/dev/null \
       | while IFS='|' read -r METHOD CLASS PATH LINE; do
           echo "| ${METHOD} | ${CLASS} | ${PATH} |"
@@ -190,13 +191,13 @@ MODIFIER_PATTERNS=(
     [ -z "$METHOD" ] && continue
 
     # 提取动词前缀
-    VERB=$(echo "$METHOD" | sed -E 's/^([a-z]+).*/\1/' || echo "")
+    VERB=$(echo "$METHOD" | sed -E 's/^([a-z]+).*/\1/' 2>/dev/null || echo "")
 
     # 识别业务名词
     BUSINESS_NOUN="-"
     for NOUN_ENTRY in "${NOUN_PATTERNS[@]}"; do
       NOUN_PATTERN="${NOUN_ENTRY#*|}"
-      if echo "$METHOD" | grep -iqE "(${NOUN_PATTERN})"; then
+      if echo "$METHOD" | grep -iqE "(${NOUN_PATTERN})" 2>/dev/null; then
         BUSINESS_NOUN="${NOUN_ENTRY%%|*}"
         break
       fi
@@ -207,8 +208,7 @@ MODIFIER_PATTERNS=(
     VARIANT_TYPE="默认/完整"
     for MOD_ENTRY in "${MODIFIER_PATTERNS[@]}"; do
       MOD_PATTERN="${MOD_ENTRY%%|*}"
-      MOD_LABEL="${MOD_ENTRY#*|}"
-      if echo "$METHOD" | grep -iqE "(${MOD_PATTERN})"; then
+      if echo "$METHOD" | grep -iqE "(${MOD_PATTERN})" 2>/dev/null; then
         MODIFIER="${MOD_PATTERN}"
         # 映射变体类型
         case "$MOD_PATTERN" in
@@ -231,7 +231,7 @@ MODIFIER_PATTERNS=(
     if [ "$MODIFIER" != "-" ]; then
       echo "| ${METHOD} | ${VERB} | ${BUSINESS_NOUN} | ${MODIFIER} | ${VARIANT_TYPE} | ${CLASS} |"
     fi
-  done < "$TMP_ALL_METHODS"
+  done < "$TMP_ALL_METHODS" || true
 
   echo ""
 
@@ -249,7 +249,7 @@ MODIFIER_PATTERNS=(
     NOUN_PATTERN="${NOUN_ENTRY#*|}"
 
     # 收集该业务名词族的所有方法
-    TMP_NOUN_METHODS=$(mktemp)
+    TMP_NOUN_METHODS=$(mktemp 2>/dev/null || mktemp -t kbgit)
     grep -iE "(${NOUN_PATTERN})" "$TMP_ALL_METHODS" 2>/dev/null > "$TMP_NOUN_METHODS"
     NOUN_COUNT=$(wc -l < "$TMP_NOUN_METHODS" | tr -d ' ')
 
@@ -261,13 +261,13 @@ MODIFIER_PATTERNS=(
 
       while IFS='|' read -r METHOD CLASS PATH LINE; do
         [ -z "$METHOD" ] && continue
-        VERB=$(echo "$METHOD" | sed -E 's/^([a-z]+).*/\1/' || echo "")
+        VERB=$(echo "$METHOD" | sed -E 's/^([a-z]+).*/\1/' 2>/dev/null || echo "")
 
         MODIFIER="-"
         VARIANT_TYPE="默认/完整"
         for MOD_ENTRY in "${MODIFIER_PATTERNS[@]}"; do
           MOD_PATTERN="${MOD_ENTRY%%|*}"
-          if echo "$METHOD" | grep -iqE "(${MOD_PATTERN})"; then
+          if echo "$METHOD" | grep -iqE "(${MOD_PATTERN})" 2>/dev/null; then
             MODIFIER="${MOD_PATTERN}"
             case "$MOD_PATTERN" in
               Part|Partial) VARIANT_TYPE="部分变体" ;;
@@ -286,7 +286,7 @@ MODIFIER_PATTERNS=(
         done
 
         echo "| ${METHOD} | ${VERB} | ${MODIFIER} | ${VARIANT_TYPE} |"
-      done < "$TMP_NOUN_METHODS"
+      done < "$TMP_NOUN_METHODS" || true
 
       echo ""
       rm -f "$TMP_NOUN_METHODS"

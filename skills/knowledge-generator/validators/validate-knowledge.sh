@@ -60,18 +60,42 @@ else
 fi
 
 # ============================================
-# 校验1：模板必填章节完整性
+# 校验1：模板必填章节完整性（按文档类型区分）
 # ============================================
 if [ "$JSON_OUTPUT" = false ]; then
   echo "--- 校验1: 模板必填章节完整性 ---"
 fi
 
-REQUIRED_SECTIONS=("是什么" "核心文件" "排查建议" "高风险点" "待补充")
+# 根据文档内容自动识别类型，选择对应的必填章节
+# 业务领域类：是什么 + 核心文件 + 核心链路 + 排查建议 + 高风险点
+# 数据模型类：是什么 + 核心表 + 排查建议
+# 项目工具类：背景 + 使用说明 + 关键代码 + 排查建议
+# 项目导航类：概述 + 核心目录 + 问题定位
+# 架构专题类：是什么 + 架构拓扑 + 核心机制 + 排查建议 + 高风险点
+# 待补充为所有类型的可选章节（不再列为必填）
+
+if grep -q "## 架构拓扑\|## 架构决策记录" "$KB_FILE" 2>/dev/null; then
+  # 架构专题类
+  REQUIRED_SECTIONS=("架构拓扑" "核心机制" "排查建议")
+elif grep -q "## 根模块\|## 子场景路由表\|## 架构特征清单" "$KB_FILE" 2>/dev/null; then
+  # 项目导航类
+  REQUIRED_SECTIONS=("概述" "核心目录" "问题定位")
+elif grep -q "## 关键代码\|## 使用说明" "$KB_FILE" 2>/dev/null; then
+  # 项目工具类
+  REQUIRED_SECTIONS=("背景" "使用说明" "关键代码")
+elif grep -q "## 核心表\|## 数据表" "$KB_FILE" 2>/dev/null; then
+  # 数据模型类
+  REQUIRED_SECTIONS=("是什么" "排查建议")
+else
+  # 业务领域类（默认）
+  REQUIRED_SECTIONS=("是什么" "核心文件" "排查建议" "高风险点")
+fi
+
 for SECTION in "${REQUIRED_SECTIONS[@]}"; do
   if grep -q "## .*${SECTION}" "$KB_FILE" 2>/dev/null; then
     print_pass "章节存在: $SECTION"
   else
-    print_warn "章节缺失（若为导航类/工具类模板可忽略）: $SECTION"
+    print_warn "章节缺失: $SECTION"
   fi
 done
 
@@ -197,14 +221,39 @@ fi
 SUMMARY_FILE="${KB_FILE%.md}.summary.json"
 if [ -f "$SUMMARY_FILE" ]; then
   print_pass "机器可读摘要存在: $(basename "$SUMMARY_FILE")"
-  # 检查关键字段是否非空（补全 confidence 和 coverageGaps）
-  for FIELD in "domain" "entryPoints" "coreChain" "grepHints" "confidence" "coverageGaps"; do
-    if grep -q "\"${FIELD}\"" "$SUMMARY_FILE" 2>/dev/null; then
-      print_pass "摘要字段存在: ${FIELD}"
+  # 检查关键字段是否非空（使用 python3 校验顶层字段存在性）
+  if command -v python3 &>/dev/null; then
+    MISSING_FIELDS=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('$SUMMARY_FILE'))
+    required = ['domain', 'entryPoints', 'coreClasses', 'coreChain', 'stateMachine', 'grepHints', 'coverageGaps']
+    missing = [f for f in required if f not in data or data[f] in (None, '', [], {})]
+    if missing:
+        print(' '.join(missing))
+except Exception as e:
+    print(f'__PARSE_ERROR__:{e}')
+" 2>/dev/null || echo "__PARSE_ERROR__")
+
+    if [ -z "$MISSING_FIELDS" ]; then
+      print_pass "摘要关键字段完整（domain/entryPoints/coreClasses/coreChain/stateMachine/grepHints/coverageGaps）"
+    elif echo "$MISSING_FIELDS" | grep -q "__PARSE_ERROR__" 2>/dev/null; then
+      print_fail "summary.json 解析失败: $MISSING_FIELDS"
     else
-      print_fail "摘要字段缺失: ${FIELD}"
+      for FIELD in $MISSING_FIELDS; do
+        print_fail "摘要字段缺失或为空: ${FIELD}"
+      done
     fi
-  done
+  else
+    # python3 不可用时降级为 grep 检查（无法区分嵌套字段）
+    for FIELD in "domain" "entryPoints" "coreClasses" "coreChain" "stateMachine" "grepHints" "coverageGaps"; do
+      if grep -q "\"${FIELD}\"" "$SUMMARY_FILE" 2>/dev/null; then
+        print_pass "摘要字段存在: ${FIELD}"
+      else
+        print_fail "摘要字段缺失: ${FIELD}"
+      fi
+    done
+  fi
 else
   print_fail "机器可读摘要不存在（.summary.json 是 AI 消费的首选入口，必须生成）"
 fi

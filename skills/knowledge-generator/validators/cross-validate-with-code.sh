@@ -38,11 +38,10 @@ if [ ! -d "$SRC_DIR" ]; then
   exit 2
 fi
 
-# JSON 解析：优先用 python3，降级用 grep 提取
-if command -v python3 &>/dev/null; then
-  JSON_PARSER="python3"
-else
-  JSON_PARSER="grep"
+# python3 必须可用（门控0 ensure-python3.sh 负责安装）
+if ! command -v python3 &>/dev/null; then
+  echo "错误: python3 不可用，请先执行 bash scripts/ensure-python3.sh" >&2
+  exit 2
 fi
 
 PASS_COUNT=0
@@ -59,37 +58,6 @@ else
   print_fail() { FAIL_COUNT=$((FAIL_COUNT + 1)); FAIL_DETAILS+=("$1"); }
   print_warn() { WARN_COUNT=$((WARN_COUNT + 1)); }
 fi
-
-# ============================================
-# 辅助函数：从 JSON 提取字段值
-# ============================================
-extract_json_array() {
-  local file="$1"
-  local field="$2"
-  if [ "$JSON_PARSER" = "python3" ]; then
-    python3 -c "
-import json, sys
-try:
-    data = json.load(open('$file'))
-    items = data.get('$field', [])
-    if isinstance(items, list):
-        for item in items:
-            if isinstance(item, dict):
-                # 提取可能的方法名/类名/值
-                for key in ['method', 'className', 'value', 'name']:
-                    if key in item:
-                        print(item[key])
-                        break
-            elif isinstance(item, str):
-                print(item)
-except Exception as e:
-    sys.stderr.write(f'JSON 解析警告: {e}\n')
-" 2>/dev/null || true
-  else
-    # grep 降级：提取字段值
-    grep -oE "\"${field}\".*?:\s*\[" "$file" 2>/dev/null || true
-  fi
-}
 
 # ============================================
 # 验证1：入口类路径存在性

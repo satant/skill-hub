@@ -17,15 +17,20 @@ if [ -z "$SRC_DIR" ] || [ ! -d "$SRC_DIR" ]; then
   exit 1
 fi
 
-# 检查是否有 rg（ripgrep），否则用 perl 辅助 grep
+# 检查是否有 rg（ripgrep），否则用 python3 或 perl 辅助
 if command -v rg &>/dev/null; then
   SEARCH_CMD="rg"
   # rg 正则：匹配引号内的中文字符串（至少包含2个中文字符）
   RG_PATTERN='"[^"]*[\x{4e00}-\x{9fff}][^"]*[\x{4e00}-\x{9fff}][^"]*"'
-  RG_GLOB='*.{java,py,js,ts,jsx,tsx,go}'
-else
-  # grep 降级模式：用 perl 做正则匹配（macOS 自带 perl）
+  RG_GLOB='*.java'
+elif command -v python3 &>/dev/null; then
+  # python3 降级模式（跨平台兼容性最好）
+  SEARCH_CMD="python3"
+elif command -v perl &>/dev/null; then
+  # perl 降级模式
   SEARCH_CMD="perl"
+else
+  SEARCH_CMD="none"
 fi
 
 {
@@ -46,11 +51,31 @@ fi
           TEXT=$(echo "$line" | cut -d' ' -f2-)
           echo "| ${COUNT} | ${TEXT} |"
         done
+  elif [ "$SEARCH_CMD" = "python3" ]; then
+    # python3 模式：跨平台兼容性最好
+    find "$SRC_DIR" -type f -name "*.java" 2>/dev/null \
+      | while IFS= read -r FILE; do
+          python3 -c "
+import re, sys
+try:
+    with open('$FILE', encoding='utf-8', errors='ignore') as f:
+        for m in re.finditer(r'\"([^\"]*[\u4e00-\u9fff][^\"]*[\u4e00-\u9fff][^\"]*)\"', f.read()):
+            print(m.group(1))
+except: pass
+" 2>/dev/null || true
+        done \
+      | sort | uniq -c | sort -rn \
+      | head -200 \
+      | while IFS= read -r line; do
+          COUNT=$(echo "$line" | awk '{print $1}')
+          TEXT=$(echo "$line" | cut -d' ' -f2-)
+          echo "| ${COUNT} | ${TEXT} |"
+        done
   elif [ "$SEARCH_CMD" = "perl" ]; then
     # perl 降级模式：遍历文件用 perl 提取中文引号字符串
-    find "$SRC_DIR" -type f \( -name "*.java" -o -name "*.py" -o -name "*.js" -o -name "*.ts" \) 2>/dev/null \
+    find "$SRC_DIR" -type f -name "*.java" 2>/dev/null \
       | while IFS= read -r FILE; do
-          perl -ne 'while (/"([^"]*[\x{4e00}-\x{9fff}][^"]*[\x{4e00}-\x{9fff}][^"]*)"/g) { print "$1\n" }' "$FILE" 2>/dev/null
+          perl -ne 'while (/"([^"]*[\x{4e00}-\x{9fff}][^"]*[\x{4e00}-\x{9fff}][^"]*)"/g) { print "$1\n" }' "$FILE" 2>/dev/null || true
         done \
       | sort | uniq -c | sort -rn \
       | head -200 \
@@ -60,7 +85,7 @@ fi
           echo "| ${COUNT} | ${TEXT} |"
         done
   else
-    echo "| 0 | （错误：需要 rg 或 perl，均未找到） |"
+    echo "| 0 | （错误：需要 rg 或 python3 或 perl，均未找到） |"
   fi
 
   echo ""

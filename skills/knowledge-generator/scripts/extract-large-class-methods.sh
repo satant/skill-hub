@@ -34,25 +34,25 @@ fi
 
   LARGE_CLASS_COUNT=0
 
-  # 遍历所有 Java 文件
-  find "$SRC_DIR" -name "*.java" -type f 2>/dev/null | while IFS= read -r FILE; do
+  # 遍历所有 Java 文件（避免管道子shell导致变量丢失）
+  while IFS= read -r FILE; do
     [ -z "$FILE" ] && continue
 
     # 计算行数
-    LINE_COUNT=$(wc -l < "$FILE" 2>/dev/null | tr -d ' ' || echo "0")
+    LINE_COUNT=$(wc -l < "$FILE" 2>/dev/null | tr -d ' ' || true)
+    LINE_COUNT="${LINE_COUNT:-0}"
 
-    # 提取 public 方法数
-    PUBLIC_METHODS=$(grep -cE '^\s*public\s+(static\s+)?(synchronized\s+)?(final\s+)?[A-Za-z0-9_<>\[\],?\s]+\s+[a-zA-Z0-9_]+\s*\(' "$FILE" 2>/dev/null || echo "0")
-    # 排除 class 声明行
+    # 提取 public 方法数（排除 class/interface/enum 声明行）
     PUBLIC_METHODS=$(grep -nE '^\s*public\s+(static\s+)?(synchronized\s+)?(final\s+)?[A-Za-z0-9_<>\[\],?\s]+\s+[a-zA-Z0-9_]+\s*\(' "$FILE" 2>/dev/null \
-      | grep -v 'class ' | grep -v 'interface ' | grep -v 'enum ' | wc -l | tr -d ' ' || echo "0")
+      | grep -v 'class ' | grep -v 'interface ' | grep -v 'enum ' | wc -l | tr -d ' ' || true)
+    PUBLIC_METHODS="${PUBLIC_METHODS:-0}"
 
     # 判断是否为大类
     IS_LARGE=0
-    if [ "$LINE_COUNT" -gt "$LINE_THRESHOLD" ]; then
+    if [ "${LINE_COUNT:-0}" -gt "${LINE_THRESHOLD:-500}" ] 2>/dev/null; then
       IS_LARGE=1
     fi
-    if [ "$PUBLIC_METHODS" -gt "$METHOD_THRESHOLD" ]; then
+    if [ "${PUBLIC_METHODS:-0}" -gt "${METHOD_THRESHOLD:-15}" ] 2>/dev/null; then
       IS_LARGE=1
     fi
 
@@ -67,7 +67,7 @@ fi
       echo "- 文件路径: \`${REL_PATH}\`"
       echo "- 总行数: ${LINE_COUNT}"
       echo "- public 方法数: ${PUBLIC_METHODS}"
-      echo "- 触发原因: $([ "$LINE_COUNT" -gt "$LINE_THRESHOLD" ] && echo "行数超阈值" || echo "")$([ "$PUBLIC_METHODS" -gt "$METHOD_THRESHOLD" ] && [ "$LINE_COUNT" -gt "$LINE_THRESHOLD" ] && echo " + " || echo "")$([ "$PUBLIC_METHODS" -gt "$METHOD_THRESHOLD" ] && echo "方法数超阈值" || echo "")"
+      echo "- 触发原因: $([ "${LINE_COUNT:-0}" -gt "${LINE_THRESHOLD:-500}" ] 2>/dev/null && echo "行数超阈值" || echo "")$([ "${PUBLIC_METHODS:-0}" -gt "${METHOD_THRESHOLD:-15}" ] 2>/dev/null && [ "${LINE_COUNT:-0}" -gt "${LINE_THRESHOLD:-500}" ] 2>/dev/null && echo " + " || echo "")$([ "${PUBLIC_METHODS:-0}" -gt "${METHOD_THRESHOLD:-15}" ] 2>/dev/null && echo "方法数超阈值" || echo "")"
       echo ""
 
       # 列出所有 public 方法，按行号排序
@@ -134,7 +134,7 @@ fi
       echo "---"
       echo ""
     fi
-  done
+  done < <(find "$SRC_DIR" -name "*.java" -type f 2>/dev/null || true)
 
   echo "## AI 处理指引"
   echo ""

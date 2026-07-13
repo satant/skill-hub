@@ -4,6 +4,57 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.4.0] - 2026-07-10
+
+### 破坏性变更
+- SKILL.md 版本号从 2.3.0 升至 2.4.0
+- **适用语言扩展**：从"仅 Java / JVM 系"扩展为"Java / Vue / React"，前端项目可走完整生成流程
+- AGENTS.md 模板版本升至 2.4.0，新增工作流和编码规范章节，原有项目升级时需人工补填
+
+### 新增
+- 新增**语言配置文件驱动机制**（lang-profiles/）：脚本通过加载语言 profile 自动适配不同语言
+  - 新增 `lang-profiles/java.profile.sh`：Java 语言配置（从现有脚本硬编码提取，确保零变化）
+  - 新增 `lang-profiles/vue.profile.sh`：Vue 语言配置（Vue Router/Pinia/API 模块入口识别）
+  - 新增 `lang-profiles/react.profile.sh`：React 语言配置（Next.js/Redux/Zustand 入口识别）
+  - 新增 `lang-profiles/detect-language.sh`：自动语言检测（package.json > 构建文件 > 文件统计）
+- 新增**前端模板集**：
+  - 新增 `templates/业务领域类模板-前端.md`：适配 Vue/React 的业务领域模板（路由/页面/组件/Store/Hook）
+  - 新增 `templates/数据模型类模板-前端.md`：适配 TypeScript Interface/Type 的数据模型模板
+- AGENTS.md 模板新增**工作流章节**（区分 Java 后端 / 前端）：
+  - 分析阶段：查知识库 → 调用链追踪 → 影响范围识别 → 约束确认
+  - 设计阶段：接口设计 → 分层设计 → 数据模型设计 → 异常设计
+  - 实现阶段：编码顺序 → 分层编码约束 → 测试规范 → 提交规范
+- AGENTS.md 模板新增**编码规范章节**（区分 Java 后端 / 前端）：
+  - Java：分层规范、类后缀约束、异常处理、日志规范、事务规范、依赖注入
+  - 前端：组件规范、状态管理规范、API 调用规范、样式规范、错误处理
+- AGENTS.md 模板新增**项目结构增强**：目录职责说明 + 分层依赖方向（ASCII 图）
+- AGENTS.md 模板新增**两阶段填充机制**：
+  - 阶段1（创建时）：快速扫描填充项目概述/技术栈/项目结构/编码规范/工作流
+  - 阶段2（扫描后回填）：深度扫描后回填核心业务领域/核心文件/问题定位
+- AGENTS.md 模板新增**前后端裁剪规则**：根据 `LANG_NAME` 自动保留对应段落，删除另一组
+
+### 变更
+- **A1 业务术语提取**（extract-business-terms.sh）：glob 从硬编码 `*.java` 改为 profile 驱动多扩展名
+- **A2 业务方法聚类**（cluster-by-business-verb.sh）：方法提取正则从 Java 专用改为 profile 驱动，新增前端函数定义提取
+- **A6 大文件方法枚举**（extract-large-class-methods.sh）：阈值按语言自动调整（Java 500/15，前端 300/10）
+- **A7 跨领域子场景识别**（cross-domain-scanner.sh）：入口识别支持路由/API 模块（Vue/React），import 分析支持前端模块
+- **B1 质量校验**（validate-knowledge.sh）：路径校验支持前端文件扩展名，关键词检查使用 profile 中的类后缀正则
+- **B4 代码反向验证**（cross-validate-with-code.sh）：类查找支持前端文件名匹配，方法验证支持前端函数定义语法
+- **audit-knowledge.sh**：文件路径和方法名引用校验支持前端
+- **ensure-python3.sh**：门控0 增加 lang-profiles 目录完整性校验
+- **SKILL.md**：适配语言声明更新、脚本调用方式增加 `LANG_PROFILE` 环境变量传递、模板选择表增加前端模板、新增前端概念映射表
+- 所有脚本和校验器新增 `--lang` 参数和 `LANG_PROFILE` 环境变量支持，不设时自动检测
+
+### 修复
+- 修复 A2/A6 的 `grep -vE "${array[*]}"` 排除模式失效问题：数组空格连接被当作单一正则，改为 `build_exclude_regex()` 函数生成 `pattern1|pattern2` 格式
+- 修复 A7 的 `grep -rl ... \( find参数 \)` 语法错误：grep 不支持 find 的 `\( -name ... \)` 参数，改为 `grep --include` 循环
+- 修复 B1 前端 TABLE_PATHS 提取中 `sed 's/\..*$//'` 去掉了文件扩展名导致路径校验全部失败
+- 修复 A7 的 `grep -vE "${LANG_IMPORT_EXCLUDE_PATTERNS[*]}"` 与 Bug 1 同类的数组排除模式失效
+- 修复 B4 前端 `find -name "${BASE_NAME}" \( -name "*.vue" ... \)` 双 -name AND 逻辑错误：文件名不可能同时匹配两个条件，改为 `-name "${BASE_NAME}.*"`
+- 修复前端 profile 正则中 `\s` 在 macOS BSD grep/sed 下兼容性问题：全部替换为 `[[:space:]]`
+- 修复 A2 中 `build_grep_exclude` 函数定义但未使用的问题（已替换为 `build_exclude_regex`）
+- 修复 A7 中 `build_import_exclude` 函数定义但未使用的问题（已替换为 `build_import_exclude_regex`）
+
 ## [2.3.0] - 2026-07-07
 
 ### 破坏性变更

@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 #
-# 业务方法三维聚类扫描器（A2 v2.3.0）
+# 业务方法三维聚类扫描器（A2 v2.4.0）
 # 从项目源码中提取方法名，按三个维度聚类：
 #   维度1：动词聚类（原有）- open/apply/check/build/query 等
 #   维度2：业务名词聚类（新增）- Red/RedRush/Invalid/Invoice 等
 #   维度3：修饰词变体标注（新增）- Part/Fast/Direct/ISV/Pre 等
 #
+# v2.4.0: 支持语言配置文件驱动，自动适配 Java/Vue/React 项目
+#   - Java: 使用 Java 方法签名正则
+#   - Vue/React: 使用前端函数定义正则
+#
 # 解决问题：issue-005 方法级业务变体识别缺失，单一动词聚类无法发现变体关系
 # 升级原因：applyPartRedRush/applyRedRush/openRedInvoice 都是冲红变体，但动词不同
 #
 # 用法: bash cluster-by-business-verb.sh <源码目录> [输出文件]
+# 环境变量:
+#   LANG_PROFILE - 语言配置文件路径（不设则自动检测）
 # 依赖: grep, awk, find（均为系统自带）
 #
 set -euo pipefail
@@ -23,11 +29,65 @@ if [ -z "$SRC_DIR" ] || [ ! -d "$SRC_DIR" ]; then
 fi
 
 # ============================================
-# 维度定义
+# 加载语言配置（v2.4.0 新增）
+# ============================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -z "${LANG_PROFILE:-}" ]; then
+  LANG_PROFILE=$(bash "$SCRIPT_DIR/../lang-profiles/detect-language.sh" "$SRC_DIR" 2>/dev/null \
+    || echo "$SCRIPT_DIR/../lang-profiles/java.profile.sh")
+fi
+
+if [ -f "$LANG_PROFILE" ]; then
+  # shellcheck disable=SC1090
+  source "$LANG_PROFILE"
+else
+  # 兜底：内联 Java 默认值
+  LANG_NAME="Java"
+  LANG_FILE_EXTENSIONS=("java")
+  LANG_METHOD_REGEX='(public|protected).*(void|[A-Z][A-Za-z0-9<>]*)\s+([a-z]+[A-Za-z0-9]*)\s*\('
+  LANG_METHOD_EXCLUDE_PATTERNS=('class ' 'interface ' 'enum ')
+fi
+
+# 构建 find 命令的文件扩展名参数
+build_find_ext_args() {
+  local args=()
+  local first=true
+  for ext in "${LANG_FILE_EXTENSIONS[@]}"; do
+    if $first; then
+      args+=(-name "*.${ext}")
+      first=false
+    else
+      args+=(-o -name "*.${ext}")
+    fi
+  done
+  echo "${args[@]}"
+}
+
+FIND_EXT_ARGS=$(build_find_ext_args)
+
+# 构建排除正则：将数组转为 "pattern1|pattern2|pattern3" 格式供 grep -vE 使用
+build_exclude_regex() {
+  local result=""
+  local first=true
+  for pattern in "${LANG_METHOD_EXCLUDE_PATTERNS[@]}"; do
+    if $first; then
+      result="${pattern}"
+      first=false
+    else
+      result="${result}|${pattern}"
+    fi
+  done
+  echo "$result"
+}
+
+METHOD_EXCLUDE_REGEX=$(build_exclude_regex)
+
+# ============================================
+# 维度定义（语言无关，所有语言共用）
 # ============================================
 
 # 维度1：动词分类（原有，保留兼容）
-# 格式："聚类名称|动词正则"（用第一个 | 分割，左边是聚类名，右边是正则）
 VERB_PATTERNS=(
   "创建类|create|insert|add|save|build|generate|init|register|apply|submit|open|start|开启|创建|新增|提交|申请|发起"
   "变更类|update|modify|change|edit|adjust|set|switch|transfer|变更|修改|调整|切换|转移"
@@ -42,7 +102,6 @@ VERB_PATTERNS=(
 )
 
 # 维度2：业务名词族（新增）
-# 格式："族名称|名词正则"
 NOUN_PATTERNS=(
   "冲红|Red|RedRush|RedBill|冲红|红字"
   "作废|Invalid|Cancel|Void|作废|撤销"
@@ -57,7 +116,6 @@ NOUN_PATTERNS=(
 )
 
 # 维度3：修饰词变体标注（新增）
-# 用于区分同一业务的不同变体
 MODIFIER_PATTERNS=(
   "Part|Partial|部分"
   "Fast|快速|快捷"
@@ -71,10 +129,92 @@ MODIFIER_PATTERNS=(
   "Manual|手动"
 )
 
+# ============================================
+# 方法名提取（v2.4.0 语言感知）
+# ============================================
+
+# 根据语言类型选择提取策略
+if [ "$LANG_NAME" = "Java" ]; then
+  # Java 方法提取（原有逻辑）
+  extract_methods_from_file() {
+    local file="$1"
+    local class_name
+    class_name=$(basename "$file" .java)
+    local rel_path="${file#$SRC_DIR/}"
+
+    grep -nE "$LANG_METHOD_REGEX" "$file" 2>/dev/null \
+      | grep -vE "$METHOD_EXCLUDE_REGEX" \
+      | while IFS= read -r line; do
+          local line_num method_full
+          line_num=$(echo "$line" | cut -d: -f1)
+          method_full=$(echo "$line" | sed -E 's/.*[[:space:]]([a-z]+[A-Za-z0-9]*)[[:space:]]*\(.*/\1/' || true)
+          if [ -n "$method_full" ]; then
+            echo "${method_full}|${class_name}|${rel_path}|${line_num}"
+          fi
+        done
+  }
+else
+  # 前端方法提取（Vue/React 通用）
+  extract_methods_from_file() {
+    local file="$1"
+    local file_name
+    file_name=$(basename "$file")
+    local rel_path="${file#$SRC_DIR/}"
+
+    # 匹配前端各种函数定义形式
+    grep -nE "$LANG_METHOD_REGEX" "$file" 2>/dev/null \
+      | grep -vE "$METHOD_EXCLUDE_REGEX" \
+      | while IFS= read -r line; do
+          local line_num content method_full
+
+          line_num=$(echo "$line" | cut -d: -f1)
+          content=$(echo "$line" | cut -d: -f2-)
+
+          # 尝试多种提取方式
+          # function methodName( → methodName
+          method_full=$(echo "$content" | sed -E 's/.*function[[:space:]]+([a-zA-Z0-9_]+)[[:space:]]*\(.*/\1/' 2>/dev/null || true)
+
+          # const methodName = ( → methodName
+          if [ -z "$method_full" ] || echo "$method_full" | grep -qE '^[[:space:]]*$'; then
+            method_full=$(echo "$content" | sed -E 's/.*const[[:space:]]+([a-zA-Z0-9_]+)[[:space:]]*=.*/\1/' 2>/dev/null || true)
+          fi
+
+          # async methodName( → methodName
+          if [ -z "$method_full" ] || echo "$method_full" | grep -qE '^[[:space:]]*$'; then
+            method_full=$(echo "$content" | sed -E 's/.*async[[:space:]]+([a-zA-Z0-9_]+)[[:space:]]*\(.*/\1/' 2>/dev/null || true)
+          fi
+
+          # methodName(args) { → methodName (Vue Options API)
+          if [ -z "$method_full" ] || echo "$method_full" | grep -qE '^[[:space:]]*$'; then
+            method_full=$(echo "$content" | sed -E 's/^[[:space:]]*([a-zA-Z0-9_]+)[[:space:]]*\(.*/\1/' 2>/dev/null || true)
+          fi
+
+          # const [name, setName] = → name (React useState 解构)
+          if [ -z "$method_full" ] || echo "$method_full" | grep -qE '^[[:space:]]*$'; then
+            method_full=$(echo "$content" | sed -E 's/.*const[[:space:]]+\[([a-zA-Z0-9_]+),.*/\1/' 2>/dev/null || true)
+          fi
+
+          # 清理：确保只拿到合法的方法名
+          if [ -n "$method_full" ] && echo "$method_full" | grep -qE '^[a-zA-Z][a-zA-Z0-9_]*$'; then
+            # 过滤掉明显的非方法名（语句关键字等）
+            case "$method_full" in
+              if|for|while|switch|catch|return|new|import|export|interface|type|enum|class|const|let|var|function|async|await|extends|implements|namespace|from|default)
+                continue
+                ;;
+              *)
+                echo "${method_full}|${file_name}|${rel_path}|${line_num}"
+                ;;
+            esac
+          fi
+        done
+  }
+fi
+
 {
-  echo "# 业务方法三维聚类报告（A2 v2.3.0）"
+  echo "# 业务方法三维聚类报告（A2 v2.4.0）"
   echo "# 生成时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "# 源码目录: $SRC_DIR"
+  echo "# 项目语言: ${LANG_NAME}"
   echo "# 维度1: 动词聚类（open/apply/check...）"
   echo "# 维度2: 业务名词聚类（Red/Invalid/Invoice...）"
   echo "# 维度3: 修饰词变体标注（Part/Fast/Direct/ISV...）"
@@ -85,26 +225,17 @@ MODIFIER_PATTERNS=(
   # ============================================
   TMP_ALL_METHODS=$(mktemp 2>/dev/null || mktemp -t kbgit)
 
-  find "$SRC_DIR" -name "*.java" -type f 2>/dev/null \
+  # shellcheck disable=SC2086
+  find "$SRC_DIR" -type f \( $FIND_EXT_ARGS \) -not -path "*/node_modules/*" 2>/dev/null \
     | while IFS= read -r FILE; do
-        CLASS_NAME=$(basename "$FILE" .java)
-        REL_PATH="${FILE#$SRC_DIR/}"
-        grep -nE "(public|protected).*(void|[A-Z][A-Za-z0-9<>]*)\s+([a-z]+[A-Za-z0-9]*)\s*\(" "$FILE" 2>/dev/null \
-          | grep -v 'class ' \
-          | grep -v 'interface ' \
-          | while IFS= read -r line; do
-              LINE_NUM=$(echo "$line" | cut -d: -f1)
-              METHOD_FULL=$(echo "$line" | sed -E 's/.*\s([a-z]+[A-Za-z0-9]*)\s*\(.*/\1/' || true)
-              if [ -n "$METHOD_FULL" ]; then
-                echo "${METHOD_FULL}|${CLASS_NAME}|${REL_PATH}|${LINE_NUM}"
-              fi
-            done
+        extract_methods_from_file "$FILE"
       done > "$TMP_ALL_METHODS"
 
   TOTAL_METHODS=$(wc -l < "$TMP_ALL_METHODS" | tr -d ' ')
 
   echo "## 总览"
   echo ""
+  echo "- 项目语言: ${LANG_NAME}"
   echo "- 扫描方法总数: ${TOTAL_METHODS}"
   echo ""
 
@@ -133,7 +264,7 @@ MODIFIER_PATTERNS=(
     if [ "$MATCH_COUNT" -gt 0 ]; then
       echo "### 聚类：${CLUSTER_NAME}（${MATCH_COUNT} 个方法）"
       echo ""
-      echo "| 方法名 | 所在类 | 文件路径 |"
+      echo "| 方法名 | 所在文件 | 文件路径 |"
       echo "| --- | --- | --- |"
       cat "$TMP_MATCHES"
       echo ""
@@ -142,7 +273,7 @@ MODIFIER_PATTERNS=(
   done
 
   # ============================================
-  # 维度2：业务名词聚类（新增）
+  # 维度2：业务名词聚类
   # ============================================
   echo "## 维度2：业务名词聚类"
   echo ""
@@ -165,7 +296,7 @@ MODIFIER_PATTERNS=(
     if [ "$MATCH_COUNT" -gt 0 ]; then
       echo "### 业务族：${NOUN_NAME}（${MATCH_COUNT} 个方法）"
       echo ""
-      echo "| 方法名 | 所在类 | 文件路径 |"
+      echo "| 方法名 | 所在文件 | 文件路径 |"
       echo "| --- | --- | --- |"
       cat "$TMP_MATCHES"
       echo ""
@@ -174,7 +305,7 @@ MODIFIER_PATTERNS=(
   done
 
   # ============================================
-  # 维度3：修饰词变体标注（新增）
+  # 维度3：修饰词变体标注
   # ============================================
   echo "## 维度3：修饰词变体标注"
   echo ""
@@ -184,7 +315,7 @@ MODIFIER_PATTERNS=(
 
   echo "### 变体方法清单"
   echo ""
-  echo "| 方法名 | 动词前缀 | 业务名词 | 修饰词 | 变体类型 | 所在类 |"
+  echo "| 方法名 | 动词前缀 | 业务名词 | 修饰词 | 变体类型 | 所在文件 |"
   echo "| --- | --- | --- | --- | --- | --- |"
 
   while IFS='|' read -r METHOD CLASS PATH LINE; do
@@ -300,15 +431,21 @@ MODIFIER_PATTERNS=(
   # ============================================
   echo "## AI 处理指引"
   echo ""
+  echo "**当前项目语言: ${LANG_NAME}**"
+  echo ""
   echo "1. **维度1 动词聚类**：识别同类型操作，用于领域边界判定"
   echo "2. **维度2 业务名词聚类**：识别同一业务族的不同方法，是变体识别的核心输入"
   echo "3. **维度3 修饰词标注**：区分同一业务的不同变体（完整/部分/快捷/ISV等）"
   echo "4. **变体矩阵**：对每个业务族的变体，必须："
-  echo "   - 追踪每个变体的独立调用链（Controller → Service → Manager → DAO）"
+  if [ "$LANG_NAME" = "Java" ]; then
+    echo "   - 追踪每个变体的独立调用链（Controller → Service → Manager → DAO）"
+  else
+    echo "   - 追踪每个变体的独立调用链（路由/页面 → 组件 → Store/Hook → API 模块）"
+  fi
   echo "   - 在知识库文档中为每个变体写独立的「核心链路」"
   echo "   - 在状态流转章节标注变体的状态差异"
   echo "   - 明确说明变体之间的差异（如：部分冲红只冲红部分明细，完整冲红冲红全部）"
   echo "5. **A8 业务变体识别**：基于本报告的维度2+维度3，执行变体全覆盖检查"
 } > "$OUTPUT_FILE"
 
-echo "业务方法三维聚类完成，输出到: $OUTPUT_FILE" >&2
+echo "业务方法三维聚类完成（语言: ${LANG_NAME}），输出到: $OUTPUT_FILE" >&2

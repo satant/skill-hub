@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 #
-# 知识库文件质量校验脚本（B1+B2 增强）
+# 知识库文件质量校验脚本（B1+B2 增强 v2.4.0）
 # 校验知识库 .md 文件中的引用路径是否存在、模板字段是否完整、关键词是否重复。
 # 同时校验 .summary.json 机器可读摘要是否存在（B3 AI 可消费性维度）。
 #
-# 用法: bash validate-knowledge.sh <知识库文件.md> <项目根目录> [索引文件.md] [--json]
+# v2.4.0: 支持语言配置文件驱动，自动适配 Java/Vue/React 项目
+#
+# 用法: bash validate-knowledge.sh <知识库文件.md> <项目根目录> [索引文件.md] [--json] [--lang <profile>]
 #   --json: 输出 JSON 格式的结构化报告（便于 AI 消费）
+#   --lang: 指定语言配置文件路径（不设则自动检测）
 #
 # 依赖: grep, awk, find（均为系统自带）
 #
@@ -20,6 +23,11 @@ JSON_OUTPUT=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json) JSON_OUTPUT=true; shift ;;
+    --lang)
+      shift
+      LANG_PROFILE="${1:-}"
+      shift
+      ;;
     *)
       if [ -z "$KB_FILE" ]; then KB_FILE="$1"
       elif [ -z "$PROJECT_ROOT" ]; then PROJECT_ROOT="$1"
@@ -28,6 +36,27 @@ while [[ $# -gt 0 ]]; do
       shift ;;
   esac
 done
+
+# ============================================
+# 加载语言配置（v2.4.0 新增）
+# ============================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -z "${LANG_PROFILE:-}" ]; then
+  LANG_PROFILE=$(bash "$SCRIPT_DIR/../lang-profiles/detect-language.sh" "$PROJECT_ROOT" 2>/dev/null \
+    || echo "$SCRIPT_DIR/../lang-profiles/java.profile.sh")
+fi
+
+if [ -f "$LANG_PROFILE" ]; then
+  # shellcheck disable=SC1090
+  source "$LANG_PROFILE"
+else
+  # 兜底：内联 Java 默认值
+  LANG_NAME="Java"
+  LANG_PACKAGE_PREFIX_REGEX='\b(com|org|net|io|cn|edu|gov)\.[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*\.[A-Z][a-zA-Z0-9_]*\b'
+  LANG_CLASS_SUFFIX_REGEX='\b[A-Z][a-zA-Z0-9]+(Manager|Service|Controller|Facade|Enum|DO|DTO|Repository|Processor|Validator|Calculator|Helper|Builder|Factory|Adapter|Converter|Provider|Handler|Listener|Observer|Strategy)\b'
+  LANG_CLASS_FILE_SUFFIX=".java"
+fi
 
 if [ -z "$KB_FILE" ] || [ -z "$PROJECT_ROOT" ]; then
   echo "用法: bash validate-knowledge.sh <知识库文件.md> <项目根目录> [索引文件.md] [--json]" >&2
@@ -113,19 +142,28 @@ fi
 # 格式3: Markdown 表格中的裸文件路径 (| ... | src/...)
 # 格式4: 包含 /src/ 或 /main/ 的任意路径片段
 
-# 提取 Java 完整类名
-JAVA_CLASSES=$(grep -oE '\b(com|org|net|io|cn|edu|gov)\.[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*\.[A-Z][a-zA-Z0-9_]*\b' "$KB_FILE" 2>/dev/null | sort -u || true)
+# 提取 Java 完整类名（仅 Java 项目）
+JAVA_CLASSES=""
+if [ "$LANG_NAME" = "Java" ]; then
+  JAVA_CLASSES=$(grep -oE "$LANG_PACKAGE_PREFIX_REGEX" "$KB_FILE" 2>/dev/null | sort -u || true)
+fi
 
-# 提取反引号包裹的文件路径
-BACKTICK_PATHS=$(grep -oE '`[^`]*(/src/|/main/|/test/|\.java|\.py|\.ts|\.js|\.go)[^`]*`' "$KB_FILE" 2>/dev/null | sed 's/`//g' | sort -u || true)
+# 提取反引号包裹的文件路径（v2.4.0: 支持前端文件扩展名）
+BACKTICK_PATHS=$(grep -oE '`[^`]*(/src/|/main/|/test/|/components/|/hooks/|/api/|/store/|/pages/|/views/|\.java|\.vue|\.py|\.ts|\.tsx|\.jsx|\.js|\.go)[^`]*`' "$KB_FILE" 2>/dev/null | sed 's/`//g' | sort -u || true)
 
-# B2增强：提取 Markdown 表格中的裸路径（| 分隔符后的文件路径）
-TABLE_PATHS=$(grep -oE '\|\s*[^|`]*(/src/|/main/java/)[^|`]*\.' "$KB_FILE" 2>/dev/null \
-  | sed 's/|\s*//' | sed 's/\.$//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' \
-  | grep -v '^$' | sort -u || true)
+# B2增强：提取 Markdown 表格中的裸路径（v2.4.0: 兼容前端路径）
+if [ "$LANG_NAME" = "Java" ]; then
+  TABLE_PATHS=$(grep -oE '\|\s*[^|`]*(/src/|/main/java/)[^|`]*\.' "$KB_FILE" 2>/dev/null \
+    | sed 's/|\s*//' | sed 's/\.$//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' \
+    | grep -v '^$' | sort -u || true)
+else
+  TABLE_PATHS=$(grep -oE '\|[[:space:]]*[^|`]*(/src/|/components/|/hooks/|/api/|/store/|/pages/|/views/)[^|`]*' "$KB_FILE" 2>/dev/null \
+    | sed 's/|[[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//' \
+    | grep -v '^$' | sort -u || true)
+fi
 
-# 提取纯文件路径片段（兼容路径出现在表格、列表、代码块等位置）
-RAW_FILE_PATHS=$(grep -oE '[a-zA-Z0-9_/-]+/(src/main|src/test)/[a-zA-Z0-9_/-]+\.(java|py|ts|js|go)' "$KB_FILE" 2>/dev/null | sort -u || true)
+# 提取纯文件路径片段（v2.4.0: 兼容前端文件扩展名）
+RAW_FILE_PATHS=$(grep -oE '[a-zA-Z0-9_/-]+/(src|components|hooks|api|store|pages|views)/[a-zA-Z0-9_/-]+\.(java|vue|py|ts|tsx|jsx|js|go)' "$KB_FILE" 2>/dev/null | sort -u || true)
 
 if [ -n "$JAVA_CLASSES" ]; then
   while IFS= read -r FULL_CLASS; do
@@ -168,7 +206,7 @@ if [ "$JSON_OUTPUT" = false ]; then
 fi
 
 if [ -n "$INDEX_FILE" ] && [ -f "$INDEX_FILE" ]; then
-  KB_KEYWORDS=$(grep -oE '\b[A-Z][a-zA-Z0-9]+(Manager|Service|Controller|Facade|Enum|DO|DTO|Repository)\b' "$KB_FILE" 2>/dev/null | sort -u || true)
+  KB_KEYWORDS=$(grep -oE "$LANG_CLASS_SUFFIX_REGEX" "$KB_FILE" 2>/dev/null | sort -u || true)
   if [ -n "$KB_KEYWORDS" ]; then
     while IFS= read -r KW; do
       [ -z "$KW" ] && continue

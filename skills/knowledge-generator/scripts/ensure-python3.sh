@@ -180,6 +180,33 @@ check_scripts() {
     fi
   done
 
+  # v2.4.0 新增：语言配置文件校验
+  local profile_dir="${script_dir}/../lang-profiles"
+  local required_profiles=(
+    "java.profile.sh"
+    "vue.profile.sh"
+    "react.profile.sh"
+    "detect-language.sh"
+  )
+
+  if [ ! -d "$profile_dir" ]; then
+    log_fail "语言配置目录缺失: lang-profiles/"
+    all_ok=false
+  else
+    for profile in "${required_profiles[@]}"; do
+      local path="${profile_dir}/${profile}"
+      if [ ! -f "$path" ]; then
+        log_fail "语言配置缺失: lang-profiles/${profile}"
+        all_ok=false
+      elif [ ! -r "$path" ]; then
+        log_fail "语言配置不可读: lang-profiles/${profile}"
+        all_ok=false
+      else
+        log_pass "语言配置就绪: lang-profiles/${profile}"
+      fi
+    done
+  fi
+
   if [ "$all_ok" = true ]; then
     log_pass "所有门控脚本和校验器就绪"
     return 0

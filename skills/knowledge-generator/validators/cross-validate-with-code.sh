@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 #
-# 代码反向验证脚本（B4）
+# 代码反向验证脚本（B4 v2.4.0）
 # 对知识库 .summary.json 中的关键信息（枚举值/方法名/类名/路径），
 # 反向在项目源码中验证是否存在，消除 AI 自校验的确认偏差。
+#
+# v2.4.0: 支持语言配置文件驱动，自动适配 Java/Vue/React 项目
+#   - Java: 包名转路径 + .java 文件查找
+#   - Vue/React: 直接按文件名/路径查找，方法定义匹配前端语法
 #
 # 解决问题：issue-009 质量校验降级为 AI 手动校验，确认偏差导致错误漏检
 # 核心逻辑：提取 .summary.json 结构化字段 → 在源码中 grep 验证 → 输出验证报告
 #
-# 用法: bash cross-validate-with-code.sh <summary.json 文件> <项目源码目录> [--json]
+# 用法: bash cross-validate-with-code.sh <summary.json 文件> <项目源码目录> [--json] [--lang <profile>]
 # 依赖: grep, find, awk, sed, python3 或 jq（用于 JSON 解析）
 #
 set -euo pipefail
@@ -16,11 +20,23 @@ SUMMARY_FILE="${1:-}"
 SRC_DIR="${2:-}"
 JSON_OUTPUT=false
 
-# 解析 --json 参数
+# 解析参数
 for arg in "$@"; do
   case "$arg" in
     --json) JSON_OUTPUT=true ;;
+    --lang) shift_found=true ;;
   esac
+done
+
+# 解析 --lang 参数
+ARGS=()
+for arg in "$@"; do
+  ARGS+=("$arg")
+done
+for i in "${!ARGS[@]}"; do
+  if [ "${ARGS[$i]}" = "--lang" ] && [ $((i + 1)) -lt ${#ARGS[@]} ]; then
+    LANG_PROFILE="${ARGS[$((i + 1))]:-}"
+  fi
 done
 
 if [ -z "$SUMMARY_FILE" ] || [ -z "$SRC_DIR" ]; then
@@ -42,6 +58,26 @@ fi
 if ! command -v python3 &>/dev/null; then
   echo "错误: python3 不可用，请先执行 bash scripts/ensure-python3.sh" >&2
   exit 2
+fi
+
+# ============================================
+# 加载语言配置（v2.4.0 新增）
+# ============================================
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -z "${LANG_PROFILE:-}" ]; then
+  LANG_PROFILE=$(bash "$SCRIPT_DIR/../lang-profiles/detect-language.sh" "$SRC_DIR" 2>/dev/null \
+    || echo "$SCRIPT_DIR/../lang-profiles/java.profile.sh")
+fi
+
+if [ -f "$LANG_PROFILE" ]; then
+  # shellcheck disable=SC1090
+  source "$LANG_PROFILE"
+else
+  # 兜底：内联 Java 默认值
+  LANG_NAME="Java"
+  LANG_CLASS_FILE_SUFFIX=".java"
+  LANG_FILE_EXTENSIONS=("java")
 fi
 
 PASS_COUNT=0
@@ -79,8 +115,15 @@ except: pass
 if [ -n "$ENTRY_CLASSES" ]; then
   echo "$ENTRY_CLASSES" | while IFS= read -r CLASS; do
     [ -z "$CLASS" ] && continue
-    REL_PATH=$(echo "$CLASS" | tr '.' '/')
-    FOUND=$(find "$SRC_DIR" -path "*/${REL_PATH}.java" -type f 2>/dev/null | head -1 || true)
+    if [ "$LANG_NAME" = "Java" ]; then
+      # Java: 包名转路径查找
+      REL_PATH=$(echo "$CLASS" | tr '.' '/')
+      FOUND=$(find "$SRC_DIR" -path "*/${REL_PATH}.java" -type f 2>/dev/null | head -1 || true)
+    else
+      # 前端: 按文件名查找（多种扩展名）
+      BASE_NAME=$(basename "$CLASS")
+      FOUND=$(find "$SRC_DIR" -name "${BASE_NAME}.*" \( -name "*.vue" -o -name "*.ts" -o -name "*.tsx" -o -name "*.jsx" -o -name "*.js" \) -not -path "*/node_modules/*" -type f 2>/dev/null | head -1 || true)
+    fi
     if [ -n "$FOUND" ]; then
       print_pass "入口类存在: $CLASS"
     else
@@ -112,8 +155,15 @@ except: pass
 if [ -n "$CORE_CLASSES" ]; then
   echo "$CORE_CLASSES" | while IFS= read -r CLASS; do
     [ -z "$CLASS" ] && continue
-    REL_PATH=$(echo "$CLASS" | tr '.' '/')
-    FOUND=$(find "$SRC_DIR" -path "*/${REL_PATH}.java" -type f 2>/dev/null | head -1 || true)
+    if [ "$LANG_NAME" = "Java" ]; then
+      # Java: 包名转路径查找
+      REL_PATH=$(echo "$CLASS" | tr '.' '/')
+      FOUND=$(find "$SRC_DIR" -path "*/${REL_PATH}.java" -type f 2>/dev/null | head -1 || true)
+    else
+      # 前端: 按文件名查找（多种扩展名）
+      BASE_NAME=$(basename "$CLASS")
+      FOUND=$(find "$SRC_DIR" -name "${BASE_NAME}.*" \( -name "*.vue" -o -name "*.ts" -o -name "*.tsx" -o -name "*.jsx" -o -name "*.js" \) -not -path "*/node_modules/*" -type f 2>/dev/null | head -1 || true)
+    fi
     if [ -n "$FOUND" ]; then
       print_pass "核心类存在: $CLASS"
     else
@@ -152,8 +202,14 @@ except: pass
 
 if [ -n "$ENUM_CLASS" ] && [ -n "$STATE_VALUES" ]; then
   # 找到枚举类文件
-  ENUM_REL_PATH=$(echo "$ENUM_CLASS" | tr '.' '/')
-  ENUM_FILE=$(find "$SRC_DIR" -path "*/${ENUM_REL_PATH}.java" -type f 2>/dev/null | head -1 || true)
+  if [ "$LANG_NAME" = "Java" ]; then
+    ENUM_REL_PATH=$(echo "$ENUM_CLASS" | tr '.' '/')
+    ENUM_FILE=$(find "$SRC_DIR" -path "*/${ENUM_REL_PATH}.java" -type f 2>/dev/null | head -1 || true)
+  else
+    # 前端: 按文件名查找
+    ENUM_BASE_NAME=$(basename "$ENUM_CLASS")
+    ENUM_FILE=$(find "$SRC_DIR" -name "${ENUM_BASE_NAME}.*" \( -name "*.ts" -o -name "*.js" \) -not -path "*/node_modules/*" -type f 2>/dev/null | head -1 || true)
+  fi
 
   if [ -n "$ENUM_FILE" ]; then
     print_pass "状态枚举类存在: $ENUM_CLASS"
@@ -200,12 +256,26 @@ if [ -n "$CORE_CHAIN_METHODS" ]; then
     METHOD_PART=$(echo "$METHOD_REF" | sed 's/.*\.//')
 
     # 找到类文件
-    CLASS_FILE=$(find "$SRC_DIR" -name "${CLASS_PART}.java" -type f 2>/dev/null | head -1 || true)
+    if [ "$LANG_NAME" = "Java" ]; then
+      CLASS_FILE=$(find "$SRC_DIR" -name "${CLASS_PART}.java" -type f 2>/dev/null | head -1 || true)
+    else
+      # 前端: 按文件名查找（多种扩展名）
+      CLASS_FILE=$(find "$SRC_DIR" -name "${CLASS_PART}.*" \( -name "*.vue" -o -name "*.ts" -o -name "*.tsx" -o -name "*.jsx" -o -name "*.js" \) -not -path "*/node_modules/*" -type f 2>/dev/null | head -1 || true)
+    fi
     if [ -n "$CLASS_FILE" ]; then
-      if grep -qE "(public|protected|private|static).*\s${METHOD_PART}\s*\(" "$CLASS_FILE" 2>/dev/null; then
-        print_pass "链路方法存在: ${METHOD_REF}"
+      if [ "$LANG_NAME" = "Java" ]; then
+        if grep -qE "(public|protected|private|static).*\s${METHOD_PART}\s*\(" "$CLASS_FILE" 2>/dev/null; then
+          print_pass "链路方法存在: ${METHOD_REF}"
+        else
+          print_fail "链路方法不存在: ${METHOD_REF}"
+        fi
       else
-        print_fail "链路方法不存在: ${METHOD_REF}"
+        # 前端: 匹配函数定义
+        if grep -qE "(function[[:space:]]+${METHOD_PART}|const[[:space:]]+${METHOD_PART}|async[[:space:]]+${METHOD_PART}|${METHOD_PART}[[:space:]]*\()" "$CLASS_FILE" 2>/dev/null; then
+          print_pass "链路方法存在: ${METHOD_REF}"
+        else
+          print_fail "链路方法不存在: ${METHOD_REF}"
+        fi
       fi
     else
       print_warn "链路方法所在类未找到: ${CLASS_PART}（可能来自外部依赖）"

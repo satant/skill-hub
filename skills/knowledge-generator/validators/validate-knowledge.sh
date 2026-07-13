@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# 知识库文件质量校验脚本（B1+B2 增强 v2.4.0）
+# 知识库文件质量校验脚本（B1+B2 增强 v2.5.0）
 # 校验知识库 .md 文件中的引用路径是否存在、模板字段是否完整、关键词是否重复。
 # 同时校验 .summary.json 机器可读摘要是否存在（B3 AI 可消费性维度）。
 #
 # v2.4.0: 支持语言配置文件驱动，自动适配 Java/Vue/React 项目
+# v2.5.0: 覆盖率不足从 WARN 升级为 FAIL（门控7），新增 core gap 零容忍校验
 #
 # 用法: bash validate-knowledge.sh <知识库文件.md> <项目根目录> [索引文件.md] [--json] [--lang <profile>]
 #   --json: 输出 JSON 格式的结构化报告（便于 AI 消费）
@@ -355,7 +356,7 @@ except: print(0)
   if [ "$COVERAGE_RATE" -ge 70 ]; then
     print_pass "方法覆盖率达标（${COVERAGE_RATE}%，阈值 ≥70%）"
   else
-    print_warn "方法覆盖率不足（${COVERAGE_RATE}%，阈值 ≥70%）"
+    print_fail "方法覆盖率不足（${COVERAGE_RATE}%，阈值 ≥70%）— 门控7：禁止标记领域为「已完成」，必须补充阅读"
   fi
 
   # 维度4：待补充与 coverageGaps 一致性校验（v2.3.0 新增）
@@ -382,6 +383,47 @@ except: print(0)
     print_pass "待补充与 coverageGaps 一致（均为空，领域已充分覆盖）"
   else
     print_pass "待补充与 coverageGaps 一致（均非空）"
+  fi
+
+  # 维度5：core gap 零容忍校验（v2.5.0 新增，issue 反馈修复）
+  # coverageGaps 中不允许存在 gapType=core 的条目
+  CORE_GAP_COUNT=$(python3 -c "
+import json
+try:
+    data = json.load(open('$SUMMARY_FILE'))
+    gaps = data.get('coverageGaps', [])
+    core_gaps = [g for g in gaps if g.get('gapType') == 'core']
+    print(len(core_gaps))
+except: print(0)
+" 2>/dev/null || echo "0")
+
+  if [ "$CORE_GAP_COUNT" -eq 0 ]; then
+    print_pass "coverageGaps 中无 core gap（零容忍通过）"
+  else
+    print_fail "coverageGaps 中存在 ${CORE_GAP_COUNT} 个 core gap — 门控7：core gap 零容忍，存在任何 core gap 时不允许标记领域为「已完成」，必须先补充"
+  fi
+
+  # 维度6：coreChain 未验证信息检查（v2.5.0 新增，issue 2.1 反馈修复）
+  # coreChain 中不允许存在 confidence=low 且 confidenceNote 包含「未完整阅读/未验证/推断」的条目
+  UNVERIFIED_CHAIN_COUNT=$(python3 -c "
+import json
+try:
+    data = json.load(open('$SUMMARY_FILE'))
+    chains = data.get('coreChain', [])
+    unverified = []
+    for c in chains:
+        if c.get('confidence') == 'low':
+            note = c.get('confidenceNote', '')
+            if any(kw in note for kw in ['未完整阅读', '未验证', '推断', '猜测', '未确认']):
+                unverified.append(c)
+    print(len(unverified))
+except: print(0)
+" 2>/dev/null || echo "0")
+
+  if [ "$UNVERIFIED_CHAIN_COUNT" -eq 0 ]; then
+    print_pass "coreChain 中无未验证信息（confidence=low 且标注未阅读/未验证）"
+  else
+    print_fail "coreChain 中存在 ${UNVERIFIED_CHAIN_COUNT} 条未验证信息 — 禁止在 coreChain 中使用未经验证的信息，未执行深度阅读的链路应为空或标注为 coverageGaps"
   fi
 fi
 

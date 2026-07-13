@@ -4,6 +4,55 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.5.0] - 2026-07-13
+
+### 破坏性变更
+- SKILL.md 版本号从 2.4.0 升至 2.5.0
+- **validate-knowledge.sh 覆盖率校验从 WARN 升级为 FAIL**：方法覆盖率 < 70% 时直接 exit 1（原为 WARN 继续执行）
+- **core gap 零容忍策略**：coverageGaps 中存在 gapType=core 的条目时直接 exit 1（原为允许 ≤ 2 条）
+- **coreChain 未验证信息拦截**：coreChain 中存在 confidence=low 且标注「未完整阅读/未验证/推断」的条目时直接 exit 1
+- 所有模板版本号统一升至 2.5.0
+
+### 新增
+- 新增**门控6：分区完整性校验**（validate-index-completeness.sh）：校验索引文件六分区表头 + 外部依赖清单格式
+  - 解决问题：subagent 生成知识库时常跳过数据模型/项目工具/架构专题三个分区，导致索引不完整
+- 新增**门控7：覆盖率程序化拦截**：validate-knowledge.sh 增强覆盖率校验，从 WARN 升级为 FAIL 级别
+  - 解决问题：methodCoverage=30% 的领域被标记为「已完成」，门控设计失效
+- 新增**门控8：执行证据链校验**（validate-gate-evidence.sh）：事后审计所有门控脚本的输出证据文件 + progress.json + 时序一致性
+  - 解决元问题：AI 可能跳过门控脚本执行，门控8 通过检查证据文件反推脚本是否执行
+- 新增**门控8a：subagent 返回值校验**（validate-subagent-output.sh）：校验 subagent 写入的结构化报告 JSON
+  - 解决问题（issue 4.2）：subagent 返回自然语言总结，主流程无法程序化校验
+- 新增 **subagent 执行检查清单模板**（templates/subagent-execution-checklist.md）：
+  - 主流程委托 subagent 时必须将检查清单完整内容拼接到 query 参数中
+  - 包含门控0-8 的逐项检查要求 + 脚本输出消费约束 + 结构化返回写入文件 + 证据链检查
+  - 解决问题：subagent 无法感知 SKILL.md 门控约束，导致门控被大量跳过
+- SKILL.md 步骤5 新增**脚本输出消费约束**：businessTerms/coreChain 等字段必须从 .cache/ 脚本输出中提取
+- SKILL.md 步骤5 新增 **coreChain 禁止使用未验证信息**规则
+- SKILL.md 步骤5 新增 **progress.json 强制写入**约束（issue 5.1 修复）
+- SKILL.md 步骤8 新增**外部依赖清单门控**和分区完整性校验脚本调用
+- SKILL.md 新增 **subagent 返回值写入文件**约束（结构化报告写入 .cache/subagent-reports/）
+- validate-knowledge.sh 新增维度5（core gap 零容忍校验）和维度6（coreChain 未验证信息检查）
+
+### 变更
+- **门控检查点表扩充**：从 6 个门控（门控0-5）扩展到 9 个门控（门控0-8，含 8a）
+- **ensure-python3.sh**：完整性校验列表新增 validate-index-completeness.sh、validate-gate-evidence.sh、validate-subagent-output.sh
+- **SKILL.md**：subagent 协作规范章节新增「执行检查清单强制传入」和「返回值写入文件」子章节
+- **SKILL.md**：配套工具表新增 validate-index-completeness.sh、validate-gate-evidence.sh、validate-subagent-output.sh 和 subagent-execution-checklist.md
+- **subagent-execution-checklist.md**：结构化返回从「建议格式」改为「必须写入文件」，新增门控8 证据链检查项
+
+### 修复说明
+本次升级针对 issue 目录中反馈的真实使用问题：
+- issue 01（三分区为空）：通过门控6 程序化校验六分区表头完整性
+- issue 02-1.1（subagent 执行偏离流程）：通过检查清单强制传入机制
+- issue 02-1.2（脚本输出未被消费）：通过脚本输出消费约束规则
+- issue 02-2.1（coreChain 使用未验证信息）：通过 coreChain 未验证信息拦截
+- issue 02-2.2（覆盖率门控失效）：通过覆盖率校验从 WARN 升级为 FAIL
+- issue 02-2.3（core gap 踩线通过）：通过 core gap 零容忍策略
+- issue 02-3.2（缺少外部依赖清单）：通过门控6 外部依赖清单格式校验
+- issue 02-4.2（subagent 返回值缺少结构化校验）：通过门控8a + 报告写入文件机制
+- issue 02-5.1（progress.json 未生成）：通过门控8 强制校验 progress.json
+- **元问题**（AI 跳过脚本执行无法检测）：通过门控8 执行证据链事后审计机制
+
 ## [2.4.0] - 2026-07-10
 
 ### 破坏性变更

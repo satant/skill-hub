@@ -150,6 +150,9 @@ check_scripts() {
   local required_validators=(
     "../validators/validate-knowledge.sh"
     "../validators/cross-validate-with-code.sh"
+    "../validators/validate-index-completeness.sh"
+    "../validators/validate-gate-evidence.sh"
+    "../validators/validate-subagent-output.sh"
   )
 
   local all_ok=true

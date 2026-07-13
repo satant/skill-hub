@@ -5,7 +5,7 @@
   "domain": "{领域名称，如：发票冲红}",
   "docFile": "{对应的人类可读文档相对路径，如：docs/knowledge/业务领域/发票冲红/发票冲红主链路.md}",
   "generatedAt": "{生成时间，ISO 8601 格式}",
-  "generatorVersion": "2.3.0",
+  "generatorVersion": "2.5.0",
 
   "summary": "{一句话描述本领域解决什么问题，≤80字}",
 
